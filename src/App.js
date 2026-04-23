@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Calendar,
   History,
+  LayoutList,
 } from "lucide-react";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -41,12 +42,16 @@ function num(v) {
 //   salary: number | "",
 //   fixedExpenses: [{ id, category, amount }],
 //   months: {
-//     "YYYY-MM": { variableExpenses: [{ id, category, amount }], savingGoal: "" }
+//     "YYYY-MM": {
+//       variableExpenses: [{ id, category, amount, actual? }],
+//       savingGoal: "",
+//       categories: [{ id, name, budget, spent }]
+//     }
 //   }
 // }
 
 function emptyMonth() {
-  return { variableExpenses: [], savingGoal: "" };
+  return { variableExpenses: [], savingGoal: "", categories: [] };
 }
 
 function loadStorage() {
@@ -63,10 +68,13 @@ function initStorage() {
   const saved = loadStorage();
   const current = todayMonth();
   if (saved) {
-    // ensure current month exists
     if (!saved.months[current]) {
       saved.months[current] = emptyMonth();
     }
+    // backfill categories for older months that lack it
+    Object.keys(saved.months).forEach((ym) => {
+      if (!saved.months[ym].categories) saved.months[ym].categories = [];
+    });
     return saved;
   }
   return {
@@ -76,18 +84,21 @@ function initStorage() {
   };
 }
 
-// ─── CSV export ───────────────────────────────────────────────────────────────
+// ─── CSV export (extended with categories + actual) ───────────────────────────
 
 function exportCSV(salary, fixedExpenses, months) {
-  const rows = [["חודש", "קטגוריה", "סכום", "סוג"]];
+  const rows = [["חודש", "קטגוריה / שם", "סכום מוערך / תקציב", "בפועל", "סוג"]];
   const allMonths = Object.keys(months).sort();
   allMonths.forEach((ym) => {
     const label = formatMonthLabel(ym);
     fixedExpenses.forEach((e) => {
-      rows.push([label, e.category, num(e.amount), "קבוע"]);
+      rows.push([label, e.category, num(e.amount), "", "קבוע"]);
     });
     (months[ym].variableExpenses || []).forEach((e) => {
-      rows.push([label, e.category, num(e.amount), "משתנה"]);
+      rows.push([label, e.category, num(e.amount), num(e.actual ?? ""), "משתנה"]);
+    });
+    (months[ym].categories || []).forEach((c) => {
+      rows.push([label, c.name, num(c.budget), num(c.spent), "קטגוריה"]);
     });
   });
   const BOM = "\uFEFF";
@@ -127,38 +138,46 @@ const Field = ({ label, children }) => (
 const inputCls =
   "w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-300";
 
-const ProgressBar = ({ value, max, colorOverride }) => {
-  const pct = max === 0 ? 0 : Math.min(100, (value / max) * 100);
-  const color = colorOverride
-    ? colorOverride
-    : pct >= 90
-    ? "bg-red-400"
-    : pct >= 70
-    ? "bg-amber-400"
-    : "bg-indigo-500";
+// Generic progress bar — thresholds configurable
+const ProgressBar = ({ value, max, thresholds }) => {
+  const pct = max === 0 ? 0 : Math.min(120, (value / max) * 100); // allow overflow visual
+  const displayPct = Math.min(100, pct);
+  const lo = thresholds?.lo ?? 80;
+  const hi = thresholds?.hi ?? 100;
+  const color = pct > hi ? "bg-red-400" : pct > lo ? "bg-amber-400" : "bg-emerald-500";
   return (
-    <div className="mt-2 h-1 w-full bg-slate-100 rounded-full overflow-hidden">
+    <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
       <div
         className={`h-full rounded-full transition-all ${color}`}
-        style={{ width: `${pct}%` }}
+        style={{ width: `${displayPct}%` }}
       />
     </div>
   );
 };
 
-// inline-editable expense row (same as before, fully preserved)
-const ExpenseRow = ({ item, onEdit, onDelete, readOnly }) => {
+// ── Inline-editable expense row — now with optional "actual" column ──
+const ExpenseRow = ({ item, onEdit, onDelete, readOnly, showActual }) => {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     category: item.category,
     amount: String(item.amount),
   });
+  const [actualDraft, setActualDraft] = useState(String(item.actual ?? ""));
+  const [editingActual, setEditingActual] = useState(false);
 
   const commit = () => {
     if (!form.category.trim() || !form.amount) return;
     onEdit({ ...item, category: form.category.trim(), amount: parseFloat(form.amount) || 0 });
     setEditing(false);
   };
+
+  const commitActual = () => {
+    onEdit({ ...item, actual: parseFloat(actualDraft) || 0 });
+    setEditingActual(false);
+  };
+
+  const diff = showActual && item.actual != null ? num(item.actual) - num(item.amount) : null;
+  const diffColor = diff === null ? "" : diff < 0 ? "text-emerald-600" : diff > 0 ? "text-red-500" : "text-slate-400";
 
   if (editing && !readOnly) {
     return (
@@ -182,6 +201,8 @@ const ExpenseRow = ({ item, onEdit, onDelete, readOnly }) => {
             placeholder="0"
           />
         </td>
+        {showActual && <td className="px-4 py-3" />}
+        {showActual && <td className="px-4 py-3" />}
         <td className="px-4 py-3">
           <div className="flex gap-1 justify-end">
             <button onClick={commit} className="p-1 text-emerald-600 hover:text-emerald-700">
@@ -204,6 +225,45 @@ const ExpenseRow = ({ item, onEdit, onDelete, readOnly }) => {
       <td className="px-6 py-4 text-left font-bold text-slate-900">
         ₪{num(item.amount).toLocaleString()}
       </td>
+
+      {showActual && (
+        <td className="px-4 py-4 text-left">
+          {editingActual && !readOnly ? (
+            <div className="flex items-center gap-1">
+              <input
+                className="w-20 border border-indigo-200 rounded-lg px-2 py-1 text-sm text-left text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                type="number"
+                value={actualDraft}
+                onChange={(e) => setActualDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && commitActual()}
+                autoFocus
+              />
+              <button onClick={commitActual} className="p-1 text-emerald-600"><Check className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setEditingActual(false)} className="p-1 text-slate-400"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          ) : (
+            <button
+              onClick={() => { if (!readOnly) { setActualDraft(String(item.actual ?? "")); setEditingActual(true); } }}
+              className={`text-sm font-medium ${readOnly ? "cursor-default" : "hover:text-indigo-600"} ${item.actual != null ? "text-slate-800" : "text-slate-300"}`}
+            >
+              {item.actual != null ? `₪${num(item.actual).toLocaleString()}` : (readOnly ? "—" : "+ הזן")}
+            </button>
+          )}
+        </td>
+      )}
+
+      {showActual && (
+        <td className="px-4 py-4 text-left">
+          {diff !== null ? (
+            <span className={`text-xs font-semibold ${diffColor}`}>
+              {diff === 0 ? "זהה" : diff < 0 ? `↓ ₪${Math.abs(diff).toLocaleString()}` : `↑ ₪${diff.toLocaleString()}`}
+            </span>
+          ) : (
+            <span className="text-xs text-slate-300">—</span>
+          )}
+        </td>
+      )}
+
       <td className="px-4 py-4">
         {!readOnly && (
           <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
@@ -220,13 +280,143 @@ const ExpenseRow = ({ item, onEdit, onDelete, readOnly }) => {
   );
 };
 
+// ── Budget category card with inline spent editing ──
+const CategoryCard = ({ cat, onEdit, onDelete, readOnly }) => {
+  const [editingSpent, setEditingSpent] = useState(false);
+  const [spentDraft, setSpentDraft] = useState(String(cat.spent));
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState({ name: cat.name, budget: String(cat.budget) });
+
+  const pct = cat.budget > 0 ? (cat.spent / cat.budget) * 100 : 0;
+  const remaining = cat.budget - cat.spent;
+  const barColor = pct > 100 ? "bg-red-400" : pct > 80 ? "bg-amber-400" : "bg-emerald-500";
+  const badgeCls = pct > 100
+    ? "bg-red-50 text-red-600 border-red-100"
+    : pct > 80
+    ? "bg-amber-50 text-amber-700 border-amber-100"
+    : "bg-emerald-50 text-emerald-700 border-emerald-100";
+
+  const commitSpent = () => {
+    onEdit({ ...cat, spent: parseFloat(spentDraft) || 0 });
+    setEditingSpent(false);
+  };
+
+  const commitName = () => {
+    if (!nameDraft.name.trim()) return;
+    onEdit({ ...cat, name: nameDraft.name.trim(), budget: parseFloat(nameDraft.budget) || 0 });
+    setEditingName(false);
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+      <div className="px-4 pt-4 pb-3">
+        {/* header row */}
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div className="flex-1 min-w-0">
+            {editingName && !readOnly ? (
+              <div className="space-y-2">
+                <input
+                  className={inputCls}
+                  value={nameDraft.name}
+                  onChange={(e) => setNameDraft({ ...nameDraft, name: e.target.value })}
+                  placeholder="שם קטגוריה"
+                  autoFocus
+                />
+                <input
+                  className={inputCls}
+                  type="number"
+                  value={nameDraft.budget}
+                  onChange={(e) => setNameDraft({ ...nameDraft, budget: e.target.value })}
+                  placeholder="תקציב (₪)"
+                />
+                <div className="flex gap-2">
+                  <button onClick={commitName} className="flex-1 py-1.5 bg-indigo-600 text-white text-xs rounded-lg">שמור</button>
+                  <button onClick={() => setEditingName(false)} className="flex-1 py-1.5 border border-slate-200 text-slate-500 text-xs rounded-lg">ביטול</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="font-bold text-slate-800 text-sm truncate">{cat.name}</p>
+                <p className="text-xs text-slate-400 mt-0.5">תקציב: ₪{num(cat.budget).toLocaleString()}</p>
+              </>
+            )}
+          </div>
+          {!readOnly && !editingName && (
+            <div className="flex gap-1 flex-shrink-0">
+              <button onClick={() => { setNameDraft({ name: cat.name, budget: String(cat.budget) }); setEditingName(true); }} className="p-1 text-slate-300 hover:text-indigo-500 transition-colors">
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={onDelete} className="p-1 text-slate-300 hover:text-red-500 transition-colors">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {!editingName && (
+          <>
+            {/* progress bar */}
+            <div className="mb-2">
+              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${barColor}`}
+                  style={{ width: `${Math.min(100, pct)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* stats row */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-right">
+                <p className="text-[10px] text-slate-400 mb-0.5">בפועל</p>
+                {editingSpent && !readOnly ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      className="w-20 border border-indigo-200 rounded-lg px-2 py-1 text-sm text-left font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                      type="number"
+                      value={spentDraft}
+                      onChange={(e) => setSpentDraft(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && commitSpent()}
+                      autoFocus
+                    />
+                    <button onClick={commitSpent} className="p-1 text-emerald-600"><Check className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setEditingSpent(false)} className="p-1 text-slate-400"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { if (!readOnly) { setSpentDraft(String(cat.spent)); setEditingSpent(true); } }}
+                    className={`text-sm font-bold ${readOnly ? "cursor-default text-slate-700" : "text-slate-700 hover:text-indigo-600"}`}
+                  >
+                    ₪{num(cat.spent).toLocaleString()}
+                    {!readOnly && <span className="text-indigo-300 text-xs mr-1">✏️</span>}
+                  </button>
+                )}
+              </div>
+
+              <span className={`text-xs font-semibold px-2 py-1 rounded-full border ${badgeCls}`}>
+                {pct.toFixed(0)}%
+              </span>
+
+              <div className="text-left">
+                <p className="text-[10px] text-slate-400 mb-0.5">יתרה</p>
+                <p className={`text-sm font-bold ${remaining < 0 ? "text-red-500" : "text-emerald-600"}`}>
+                  {remaining < 0 ? "-" : ""}₪{Math.abs(remaining).toLocaleString()}
+                </p>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [store, setStore] = useState(initStorage);
   const [activeMonth, setActiveMonth] = useState(todayMonth);
 
-  // persist on every change
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
   }, [store]);
@@ -236,7 +426,12 @@ export default function App() {
   const isCurrentMonth = activeMonth === currentMonth;
   const monthData = store.months[activeMonth] || emptyMonth();
   const { salary, fixedExpenses } = store;
-  const { variableExpenses, savingGoal } = monthData;
+  const { variableExpenses, savingGoal, categories } = {
+    variableExpenses: [],
+    savingGoal: "",
+    categories: [],
+    ...monthData,
+  };
 
   const setStore_ = (patch) => setStore((prev) => ({ ...prev, ...patch }));
 
@@ -277,14 +472,6 @@ export default function App() {
     setActiveMonth(ym);
   };
 
-  const handleAddNextMonth = () => {
-    const [y, m] = currentMonth.split("-").map(Number);
-    let ny = y, nm = m + 1;
-    if (nm > 12) { ny++; nm = 1; }
-    const next = `${ny}-${String(nm).padStart(2, "0")}`;
-    addNewMonth(next);
-  };
-
   // ── salary inline edit ──
   const [editingSalary, setEditingSalary] = useState(false);
   const [salaryDraft, setSalaryDraft] = useState("");
@@ -297,7 +484,7 @@ export default function App() {
   const openGoalEdit = () => { setGoalDraft(savingGoal); setEditingGoal(true); };
   const commitGoal = () => { setMonthData({ savingGoal: parseFloat(goalDraft) || "" }); setEditingGoal(false); };
 
-  // ── add item modal ──
+  // ── add expense modal (fixed / variable) ──
   const [addModal, setAddModal] = useState(null);
   const [addForm, setAddForm] = useState({ category: "", amount: "" });
 
@@ -324,6 +511,29 @@ export default function App() {
   const deleteVariable = (id) =>
     setMonthData({ variableExpenses: variableExpenses.filter((i) => i.id !== id) });
 
+  // ── budget categories ──
+  const [catModal, setCatModal] = useState(false);
+  const [catForm, setCatForm] = useState({ name: "", budget: "" });
+
+  const openAddCat = () => { setCatForm({ name: "", budget: "" }); setCatModal(true); };
+
+  const commitAddCat = () => {
+    if (!catForm.name.trim() || !catForm.budget) return;
+    const cat = {
+      id: Date.now(),
+      name: catForm.name.trim(),
+      budget: parseFloat(catForm.budget) || 0,
+      spent: 0,
+    };
+    setMonthData({ categories: [...categories, cat] });
+    setCatModal(false);
+  };
+
+  const editCat = (updated) =>
+    setMonthData({ categories: categories.map((c) => (c.id === updated.id ? updated : c)) });
+  const deleteCat = (id) =>
+    setMonthData({ categories: categories.filter((c) => c.id !== id) });
+
   // ── new month modal ──
   const [newMonthModal, setNewMonthModal] = useState(false);
   const [newMonthVal, setNewMonthVal] = useState(currentMonth);
@@ -331,7 +541,6 @@ export default function App() {
   // ── reset ──
   const handleReset = () => {
     if (window.confirm("למחוק את כל הנתונים ולהתחיל מחדש?")) {
-      const fresh = initStorage();
       setStore({ salary: "", fixedExpenses: [], months: { [currentMonth]: emptyMonth() } });
       setActiveMonth(currentMonth);
       localStorage.removeItem(STORAGE_KEY);
@@ -351,7 +560,6 @@ export default function App() {
         </div>
 
         <div className="flex flex-wrap gap-3 items-center">
-          {/* salary badge */}
           {editingSalary ? (
             <div className="flex items-center gap-2 bg-white border border-indigo-200 rounded-xl px-3 py-2 shadow-sm">
               <span className="text-sm text-slate-500">משכורת: ₪</span>
@@ -378,7 +586,6 @@ export default function App() {
             </button>
           )}
 
-          {/* export CSV */}
           <button
             onClick={() => exportCSV(salary, fixedExpenses, store.months)}
             className="flex items-center gap-2 bg-white border border-slate-200 px-4 py-2 rounded-xl text-slate-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors shadow-sm text-sm font-medium"
@@ -415,7 +622,6 @@ export default function App() {
             צפייה בהיסטוריה
           </span>
         )}
-
         {isCurrentMonth && (
           <span className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-600 border border-emerald-100 px-2.5 py-1 rounded-full">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
@@ -446,13 +652,11 @@ export default function App() {
               <h2 className="text-2xl font-bold text-slate-900 mt-1">₪{totalFixed.toLocaleString()}</h2>
               <ProgressBar value={totalFixed} max={salaryNum} />
             </div>
-
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
               <p className="text-slate-500 text-xs font-medium uppercase">הוצאות משתנות</p>
               <h2 className="text-2xl font-bold text-slate-900 mt-1">₪{totalVariable.toLocaleString()}</h2>
               <ProgressBar value={totalVariable} max={salaryNum} />
             </div>
-
             <div className="bg-emerald-600 p-5 rounded-2xl shadow-lg text-white">
               <p className="text-emerald-100 text-xs font-medium uppercase">נותר אחרי הוצאות</p>
               <h2 className="text-2xl font-bold mt-1">₪{remainingAfterExpenses.toLocaleString()}</h2>
@@ -462,7 +666,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Fixed expenses — global, always editable */}
+          {/* Fixed expenses */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/30 flex justify-between items-center">
               <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -477,7 +681,6 @@ export default function App() {
                 <Plus className="w-3.5 h-3.5" /> הוסף
               </button>
             </div>
-
             <div className="overflow-x-auto">
               <table className="w-full text-right">
                 <tbody className="divide-y divide-slate-100">
@@ -485,7 +688,7 @@ export default function App() {
                     <tr><td colSpan={3} className="px-6 py-8 text-center text-slate-400 text-sm">אין הוצאות קבועות — לחץ + להוספה</td></tr>
                   ) : (
                     fixedExpenses.map((item) => (
-                      <ExpenseRow key={item.id} item={item} onEdit={editFixed} onDelete={() => deleteFixed(item.id)} />
+                      <ExpenseRow key={item.id} item={item} onEdit={editFixed} onDelete={() => deleteFixed(item.id)} showActual={false} />
                     ))
                   )}
                 </tbody>
@@ -498,7 +701,7 @@ export default function App() {
             )}
           </div>
 
-          {/* Variable expenses — per month */}
+          {/* Variable expenses — with actual column */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 bg-rose-50/20 flex justify-between items-center">
               <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -515,12 +718,22 @@ export default function App() {
                 </button>
               )}
             </div>
-
             <div className="overflow-x-auto">
               <table className="w-full text-right">
+                {variableExpenses.length > 0 && (
+                  <thead>
+                    <tr className="bg-slate-50/50 text-xs text-slate-400 font-medium">
+                      <th className="px-6 py-2 text-right">קטגוריה</th>
+                      <th className="px-6 py-2 text-left">צפי</th>
+                      <th className="px-4 py-2 text-left">בפועל</th>
+                      <th className="px-4 py-2 text-left">הפרש</th>
+                      <th className="px-4 py-2" />
+                    </tr>
+                  </thead>
+                )}
                 <tbody className="divide-y divide-slate-100">
                   {variableExpenses.length === 0 ? (
-                    <tr><td colSpan={3} className="px-6 py-8 text-center text-slate-400 text-sm">
+                    <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-400 text-sm">
                       {isCurrentMonth ? "אין הוצאות משתנות — לחץ + להוספה" : "לא נרשמו הוצאות משתנות בחודש זה"}
                     </td></tr>
                   ) : (
@@ -531,6 +744,7 @@ export default function App() {
                         onEdit={editVariable}
                         onDelete={() => deleteVariable(item.id)}
                         readOnly={!isCurrentMonth}
+                        showActual={true}
                       />
                     ))
                   )}
@@ -538,9 +752,71 @@ export default function App() {
               </table>
             </div>
             {variableExpenses.length > 0 && (
-              <div className="px-6 py-3 bg-slate-50/60 border-t border-slate-100 text-left text-sm font-bold text-slate-700">
-                סה"כ: ₪{totalVariable.toLocaleString()}
+              <div className="px-6 py-3 bg-slate-50/60 border-t border-slate-100 flex justify-between text-sm font-bold text-slate-700">
+                <span>צפי סה"כ: ₪{totalVariable.toLocaleString()}</span>
+                {(() => {
+                  const totalActual = variableExpenses.reduce((s, i) => s + num(i.actual ?? i.amount), 0);
+                  const diff = totalActual - totalVariable;
+                  return (
+                    <span className={diff > 0 ? "text-red-500" : diff < 0 ? "text-emerald-600" : "text-slate-400"}>
+                      בפועל: ₪{totalActual.toLocaleString()}
+                      {diff !== 0 && <span className="mr-1 text-xs">({diff > 0 ? "+" : ""}₪{diff.toLocaleString()})</span>}
+                    </span>
+                  );
+                })()}
               </div>
+            )}
+          </div>
+
+          {/* ── Budget Categories ── */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 bg-violet-50/30 flex justify-between items-center">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                <LayoutList className="w-4 h-4 text-violet-400" />
+                קטגוריות תקציב
+                <span className="text-xs font-normal text-slate-400">({formatMonthLabel(activeMonth)})</span>
+              </h3>
+              {isCurrentMonth && (
+                <button
+                  onClick={openAddCat}
+                  className="flex items-center gap-1 text-xs font-medium text-violet-600 hover:text-violet-800 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" /> הוסף קטגוריה
+                </button>
+              )}
+            </div>
+
+            {categories.length === 0 ? (
+              <p className="text-center text-slate-400 text-sm py-8">
+                {isCurrentMonth ? "אין קטגוריות תקציב — לחץ + להוספה" : "לא הוגדרו קטגוריות בחודש זה"}
+              </p>
+            ) : (
+              <>
+                {/* summary strip */}
+                {(() => {
+                  const totalBudget = categories.reduce((s, c) => s + num(c.budget), 0);
+                  const totalSpent = categories.reduce((s, c) => s + num(c.spent), 0);
+                  return (
+                    <div className="px-6 py-2.5 bg-slate-50/40 border-b border-slate-100 flex gap-6 text-xs text-slate-500">
+                      <span>תקציב כולל: <span className="font-semibold text-slate-700">₪{totalBudget.toLocaleString()}</span></span>
+                      <span>הוצאתי: <span className="font-semibold text-slate-700">₪{totalSpent.toLocaleString()}</span></span>
+                      <span>נותר: <span className={`font-semibold ${totalBudget - totalSpent < 0 ? "text-red-500" : "text-emerald-600"}`}>₪{(totalBudget - totalSpent).toLocaleString()}</span></span>
+                    </div>
+                  );
+                })()}
+
+                <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {categories.map((cat) => (
+                    <CategoryCard
+                      key={cat.id}
+                      cat={cat}
+                      onEdit={editCat}
+                      onDelete={() => deleteCat(cat.id)}
+                      readOnly={!isCurrentMonth}
+                    />
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -554,7 +830,6 @@ export default function App() {
             </h3>
 
             <div className="space-y-5">
-
               {/* usage bar */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -564,9 +839,7 @@ export default function App() {
                 <div className="overflow-hidden h-2 rounded bg-slate-100">
                   <div
                     style={{ width: `${usagePct}%` }}
-                    className={`h-full rounded transition-all ${
-                      usagePct >= 90 ? "bg-red-400" : usagePct >= 70 ? "bg-amber-400" : "bg-indigo-500"
-                    }`}
+                    className={`h-full rounded transition-all ${usagePct >= 90 ? "bg-red-400" : usagePct >= 70 ? "bg-amber-400" : "bg-indigo-500"}`}
                   />
                 </div>
                 <p className="text-xs text-slate-400 mt-1.5">
@@ -585,14 +858,13 @@ export default function App() {
                 <p className="text-[10px] text-slate-400 leading-tight">משכורת פחות כל ההוצאות הקבועות והמשתנות</p>
               </div>
 
-              {/* saving goal — per month */}
+              {/* saving goal */}
               <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-slate-600 font-medium flex items-center gap-1.5">
                     <Target className="w-4 h-4 text-indigo-400" />
                     יעד חיסכון
                   </span>
-
                   {editingGoal && isCurrentMonth ? (
                     <div className="flex items-center gap-1">
                       <span className="text-xs text-slate-400">₪</span>
@@ -618,7 +890,6 @@ export default function App() {
                   )}
                 </div>
 
-                {/* saving goal progress bar */}
                 {num(savingGoal) > 0 && (
                   <>
                     <div>
@@ -629,9 +900,7 @@ export default function App() {
                       <div className="overflow-hidden h-2 rounded bg-slate-100">
                         <div
                           style={{ width: `${savingGoalPct}%` }}
-                          className={`h-full rounded transition-all ${
-                            savingGoalPct >= 100 ? "bg-emerald-500" : savingGoalPct >= 60 ? "bg-amber-400" : "bg-red-400"
-                          }`}
+                          className={`h-full rounded transition-all ${savingGoalPct >= 100 ? "bg-emerald-500" : savingGoalPct >= 60 ? "bg-amber-400" : "bg-red-400"}`}
                         />
                       </div>
                     </div>
@@ -672,12 +941,21 @@ export default function App() {
                       <span>₪{remainingAfterGoal.toLocaleString()} פנויים לשיקול דעתך</span>
                     </div>
                   )}
+                  {categories.length > 0 && (() => {
+                    const overBudget = categories.filter((c) => c.spent > c.budget);
+                    return overBudget.length > 0 ? (
+                      <div className="flex items-center gap-2 text-sm text-red-600">
+                        <div className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                        <span>{overBudget.length} קטגורי{overBudget.length > 1 ? "ות" : "ה"} חרגו מהתקציב</span>
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               )}
             </div>
           </div>
 
-          {/* Month history summary */}
+          {/* Month history */}
           {sortedMonths.length > 1 && (
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
               <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2 text-sm">
@@ -694,11 +972,7 @@ export default function App() {
                     <button
                       key={ym}
                       onClick={() => setActiveMonth(ym)}
-                      className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition-colors ${
-                        ym === activeMonth
-                          ? "bg-indigo-50 border border-indigo-100 text-indigo-700"
-                          : "hover:bg-slate-50 text-slate-600"
-                      }`}
+                      className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition-colors ${ym === activeMonth ? "bg-indigo-50 border border-indigo-100 text-indigo-700" : "hover:bg-slate-50 text-slate-600"}`}
                     >
                       <span className="font-medium">
                         {formatMonthLabel(ym)}
@@ -724,7 +998,7 @@ export default function App() {
         </div>
       </main>
 
-      {/* ── Add item modal ── */}
+      {/* ── Add expense modal (fixed / variable) ── */}
       {addModal && (
         <Modal
           title={addModal.list === "fixed" ? "הוספת הוצאה קבועה" : "הוספת הוצאה משתנה"}
@@ -757,6 +1031,37 @@ export default function App() {
         </Modal>
       )}
 
+      {/* ── Add budget category modal ── */}
+      {catModal && (
+        <Modal title="קטגוריית תקציב חדשה" onClose={() => setCatModal(false)}>
+          <Field label="שם הקטגוריה">
+            <input
+              className={inputCls}
+              value={catForm.name}
+              onChange={(e) => setCatForm({ ...catForm, name: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && commitAddCat()}
+              placeholder="למשל: מסעדות"
+              autoFocus
+            />
+          </Field>
+          <Field label="תקציב חודשי (₪)">
+            <input
+              className={inputCls}
+              type="number"
+              value={catForm.budget}
+              onChange={(e) => setCatForm({ ...catForm, budget: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && commitAddCat()}
+              placeholder="0"
+            />
+          </Field>
+          <p className="text-xs text-slate-400">לאחר ההוספה תוכל לעדכן את הסכום שהוצאת בפועל ישירות מהכרטיס.</p>
+          <div className="flex gap-3 pt-1">
+            <button onClick={() => setCatModal(false)} className="flex-1 py-2 border border-slate-200 rounded-xl text-sm text-slate-500 hover:bg-slate-50">ביטול</button>
+            <button onClick={commitAddCat} className="flex-1 py-2 bg-violet-600 rounded-xl text-sm text-white font-medium hover:bg-violet-700">הוסף</button>
+          </div>
+        </Modal>
+      )}
+
       {/* ── New month modal ── */}
       {newMonthModal && (
         <Modal title="הוספת חודש" onClose={() => setNewMonthModal(false)}>
@@ -769,7 +1074,7 @@ export default function App() {
             />
           </Field>
           <p className="text-xs text-slate-400">
-            ההוצאות הקבועות יועתקו אוטומטית לחודש החדש. ההוצאות המשתנות יתחילו ריקות.
+            ההוצאות הקבועות יועתקו אוטומטית לחודש החדש. ההוצאות המשתנות וקטגוריות התקציב יתחילו ריקות.
           </p>
           <div className="flex gap-3 pt-1">
             <button onClick={() => setNewMonthModal(false)} className="flex-1 py-2 border border-slate-200 rounded-xl text-sm text-slate-500 hover:bg-slate-50">ביטול</button>
