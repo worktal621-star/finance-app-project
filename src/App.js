@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   PieChart as PieChartIcon,
   Banknote,
@@ -71,7 +71,6 @@ function initStorage() {
     if (!saved.months[current]) {
       saved.months[current] = emptyMonth();
     }
-    // backfill categories for older months that lack it
     Object.keys(saved.months).forEach((ym) => {
       if (!saved.months[ym].categories) saved.months[ym].categories = [];
     });
@@ -84,7 +83,7 @@ function initStorage() {
   };
 }
 
-// ─── CSV export (extended with categories + actual) ───────────────────────────
+// ─── CSV export ───────────────────────────────────────────────────────────────
 
 function exportCSV(salary, fixedExpenses, months) {
   const rows = [["חודש", "קטגוריה / שם", "סכום מוערך / תקציב", "בפועל", "סוג"]];
@@ -138,9 +137,8 @@ const Field = ({ label, children }) => (
 const inputCls =
   "w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-300";
 
-// Generic progress bar — thresholds configurable
 const ProgressBar = ({ value, max, thresholds }) => {
-  const pct = max === 0 ? 0 : Math.min(120, (value / max) * 100); // allow overflow visual
+  const pct = max === 0 ? 0 : Math.min(120, (value / max) * 100);
   const displayPct = Math.min(100, pct);
   const lo = thresholds?.lo ?? 80;
   const hi = thresholds?.hi ?? 100;
@@ -155,13 +153,10 @@ const ProgressBar = ({ value, max, thresholds }) => {
   );
 };
 
-// ── Inline-editable expense row — now with optional "actual" column ──
+// ── Inline-editable expense row with optional "actual" column ──
 const ExpenseRow = ({ item, onEdit, onDelete, readOnly, showActual }) => {
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({
-    category: item.category,
-    amount: String(item.amount),
-  });
+  const [form, setForm] = useState({ category: item.category, amount: String(item.amount) });
   const [actualDraft, setActualDraft] = useState(String(item.actual ?? ""));
   const [editingActual, setEditingActual] = useState(false);
 
@@ -310,7 +305,6 @@ const CategoryCard = ({ cat, onEdit, onDelete, readOnly }) => {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
       <div className="px-4 pt-4 pb-3">
-        {/* header row */}
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex-1 min-w-0">
             {editingName && !readOnly ? (
@@ -343,7 +337,10 @@ const CategoryCard = ({ cat, onEdit, onDelete, readOnly }) => {
           </div>
           {!readOnly && !editingName && (
             <div className="flex gap-1 flex-shrink-0">
-              <button onClick={() => { setNameDraft({ name: cat.name, budget: String(cat.budget) }); setEditingName(true); }} className="p-1 text-slate-300 hover:text-indigo-500 transition-colors">
+              <button
+                onClick={() => { setNameDraft({ name: cat.name, budget: String(cat.budget) }); setEditingName(true); }}
+                className="p-1 text-slate-300 hover:text-indigo-500 transition-colors"
+              >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
               <button onClick={onDelete} className="p-1 text-slate-300 hover:text-red-500 transition-colors">
@@ -355,7 +352,6 @@ const CategoryCard = ({ cat, onEdit, onDelete, readOnly }) => {
 
         {!editingName && (
           <>
-            {/* progress bar */}
             <div className="mb-2">
               <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
                 <div
@@ -365,7 +361,6 @@ const CategoryCard = ({ cat, onEdit, onDelete, readOnly }) => {
               </div>
             </div>
 
-            {/* stats row */}
             <div className="flex items-center justify-between gap-2">
               <div className="text-right">
                 <p className="text-[10px] text-slate-400 mb-0.5">בפועל</p>
@@ -449,13 +444,23 @@ export default function App() {
   const totalVariable = variableExpenses.reduce((s, i) => s + num(i.amount), 0);
   const totalExpenses = totalFixed + totalVariable;
   const salaryNum = num(salary);
-  const remainingAfterExpenses = salaryNum - totalExpenses;
+  const remainingAfterExpenses = salaryNum - totalExpenses;   // צפי — נשמר ללא שינוי
   const remainingAfterGoal = remainingAfterExpenses - num(savingGoal);
   const usagePct = salaryNum > 0 ? Math.min(100, (totalExpenses / salaryNum) * 100) : 0;
   const savingsPct = salaryNum > 0 ? ((num(savingGoal) / salaryNum) * 100).toFixed(1) : "0";
   const savingGoalPct = num(savingGoal) > 0
     ? Math.min(100, ((salaryNum - totalExpenses) / num(savingGoal)) * 100)
     : 0;
+
+  // ── actual total: variable actual + categories spent ──
+  const actualTotal = useMemo(() => {
+    const varActual = variableExpenses.reduce((s, i) => s + num(i.actual ?? i.amount), 0);
+    const catSpent  = categories.reduce((s, c) => s + num(c.spent), 0);
+    return varActual + catSpent;
+  }, [variableExpenses, categories]);
+
+  const remainingActual = salaryNum - (totalFixed + actualTotal);
+  const actualPct = salaryNum > 0 ? Math.min(100, ((totalFixed + actualTotal) / salaryNum) * 100) : 0;
 
   const remainColor = (v) =>
     v < 0 ? "text-red-500" : v === 0 ? "text-slate-500" : "text-emerald-600";
@@ -645,23 +650,60 @@ export default function App() {
         {/* ── Left column ── */}
         <div className="lg:col-span-2 space-y-6">
 
-          {/* Summary cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* ── Summary cards: 4 cards in 2×2 grid ── */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+
+            {/* הוצאות קבועות */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
               <p className="text-slate-500 text-xs font-medium uppercase">הוצאות קבועות</p>
               <h2 className="text-2xl font-bold text-slate-900 mt-1">₪{totalFixed.toLocaleString()}</h2>
-              <ProgressBar value={totalFixed} max={salaryNum} />
+              <div className="mt-2">
+                <ProgressBar value={totalFixed} max={salaryNum} />
+              </div>
+              {salaryNum > 0 && (
+                <p className="text-[10px] text-slate-400 mt-1.5">
+                  {((totalFixed / salaryNum) * 100).toFixed(1)}% מההכנסה
+                </p>
+              )}
             </div>
+
+            {/* צפי הוצאות משתנות — reference */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
-              <p className="text-slate-500 text-xs font-medium uppercase">הוצאות משתנות</p>
+              <p className="text-slate-500 text-xs font-medium uppercase">צפי משתנות</p>
               <h2 className="text-2xl font-bold text-slate-900 mt-1">₪{totalVariable.toLocaleString()}</h2>
-              <ProgressBar value={totalVariable} max={salaryNum} />
+              <div className="mt-2">
+                <ProgressBar value={totalVariable} max={salaryNum} />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1.5">נתון ייחוס בלבד</p>
             </div>
+
+            {/* הוצאות בפועל — חדש */}
+            <div className="bg-indigo-700 p-5 rounded-2xl shadow-lg text-white">
+              <p className="text-indigo-200 text-xs font-medium uppercase">הוצאות בפועל</p>
+              <h2 className="text-2xl font-bold mt-1">₪{actualTotal.toLocaleString()}</h2>
+              <div className="mt-2 h-1.5 w-full bg-indigo-500/50 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-white/70 rounded-full transition-all"
+                  style={{ width: `${actualPct}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-indigo-200 mt-1.5">
+                {salaryNum > 0 ? `${actualPct.toFixed(1)}% מההכנסה` : "—"}
+              </p>
+            </div>
+
+            {/* יתרה בפועל */}
             <div className="bg-emerald-600 p-5 rounded-2xl shadow-lg text-white">
-              <p className="text-emerald-100 text-xs font-medium uppercase">נותר אחרי הוצאות</p>
-              <h2 className="text-2xl font-bold mt-1">₪{remainingAfterExpenses.toLocaleString()}</h2>
-              <p className="text-xs text-emerald-100 mt-2 font-medium">
-                {salaryNum > 0 ? `${(100 - usagePct).toFixed(1)}% מההכנסה` : "—"}
+              <p className="text-emerald-100 text-xs font-medium uppercase">יתרה בפועל</p>
+              <h2 className="text-2xl font-bold mt-1">₪{remainingActual.toLocaleString()}</h2>
+              <div className="mt-2 h-1.5 w-full bg-emerald-500/50 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-white/70 rounded-full transition-all"
+                  style={{ width: `${salaryNum > 0 ? Math.min(100, Math.max(0, (remainingActual / salaryNum) * 100)) : 0}%` }}
+                />
+              </div>
+              <p className="text-xs text-emerald-100 mt-1.5 font-medium">
+                {salaryNum > 0 ? `${(100 - actualPct).toFixed(1)}% מההכנסה` : "—"}
               </p>
             </div>
           </div>
@@ -755,11 +797,11 @@ export default function App() {
               <div className="px-6 py-3 bg-slate-50/60 border-t border-slate-100 flex justify-between text-sm font-bold text-slate-700">
                 <span>צפי סה"כ: ₪{totalVariable.toLocaleString()}</span>
                 {(() => {
-                  const totalActual = variableExpenses.reduce((s, i) => s + num(i.actual ?? i.amount), 0);
-                  const diff = totalActual - totalVariable;
+                  const totalActualVar = variableExpenses.reduce((s, i) => s + num(i.actual ?? i.amount), 0);
+                  const diff = totalActualVar - totalVariable;
                   return (
                     <span className={diff > 0 ? "text-red-500" : diff < 0 ? "text-emerald-600" : "text-slate-400"}>
-                      בפועל: ₪{totalActual.toLocaleString()}
+                      בפועל: ₪{totalActualVar.toLocaleString()}
                       {diff !== 0 && <span className="mr-1 text-xs">({diff > 0 ? "+" : ""}₪{diff.toLocaleString()})</span>}
                     </span>
                   );
@@ -768,7 +810,7 @@ export default function App() {
             )}
           </div>
 
-          {/* ── Budget Categories ── */}
+          {/* Budget Categories */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 bg-violet-50/30 flex justify-between items-center">
               <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -792,10 +834,9 @@ export default function App() {
               </p>
             ) : (
               <>
-                {/* summary strip */}
                 {(() => {
                   const totalBudget = categories.reduce((s, c) => s + num(c.budget), 0);
-                  const totalSpent = categories.reduce((s, c) => s + num(c.spent), 0);
+                  const totalSpent  = categories.reduce((s, c) => s + num(c.spent), 0);
                   return (
                     <div className="px-6 py-2.5 bg-slate-50/40 border-b border-slate-100 flex gap-6 text-xs text-slate-500">
                       <span>תקציב כולל: <span className="font-semibold text-slate-700">₪{totalBudget.toLocaleString()}</span></span>
@@ -830,32 +871,43 @@ export default function App() {
             </h3>
 
             <div className="space-y-5">
-              {/* usage bar */}
+
+              {/* usage bar — based on actual */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-semibold py-1 px-2 rounded-full text-indigo-600 bg-indigo-100 uppercase">ניצול מהכנסה</span>
-                  <span className="text-xs font-semibold text-indigo-600">{usagePct.toFixed(0)}%</span>
+                  <span className="text-xs font-semibold py-1 px-2 rounded-full text-indigo-600 bg-indigo-100 uppercase">ניצול בפועל</span>
+                  <span className="text-xs font-semibold text-indigo-600">{actualPct.toFixed(0)}%</span>
                 </div>
                 <div className="overflow-hidden h-2 rounded bg-slate-100">
                   <div
-                    style={{ width: `${usagePct}%` }}
-                    className={`h-full rounded transition-all ${usagePct >= 90 ? "bg-red-400" : usagePct >= 70 ? "bg-amber-400" : "bg-indigo-500"}`}
+                    style={{ width: `${actualPct}%` }}
+                    className={`h-full rounded transition-all ${
+                      actualPct >= 90 ? "bg-red-400" : actualPct >= 70 ? "bg-amber-400" : "bg-indigo-500"
+                    }`}
                   />
                 </div>
                 <p className="text-xs text-slate-400 mt-1.5">
-                  ₪{totalExpenses.toLocaleString()} מתוך {salaryNum > 0 ? `₪${salaryNum.toLocaleString()}` : "—"}
+                  ₪{(totalFixed + actualTotal).toLocaleString()} מתוך {salaryNum > 0 ? `₪${salaryNum.toLocaleString()}` : "—"}
                 </p>
               </div>
 
-              {/* remaining after expenses */}
-              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-sm text-slate-600 font-medium">אחרי הוצאות:</span>
-                  <span className={`text-lg font-bold ${remainColor(remainingAfterExpenses)}`}>
+              {/* remaining — shows both estimated and actual */}
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-slate-400">לפי צפי:</span>
+                  <span className={`text-sm font-semibold ${remainColor(remainingAfterExpenses)}`}>
                     ₪{remainingAfterExpenses.toLocaleString()}
                   </span>
                 </div>
-                <p className="text-[10px] text-slate-400 leading-tight">משכורת פחות כל ההוצאות הקבועות והמשתנות</p>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-slate-600 font-medium">בפועל:</span>
+                  <span className={`text-lg font-bold ${remainColor(remainingActual)}`}>
+                    ₪{remainingActual.toLocaleString()}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-tight pt-1 border-t border-slate-200">
+                  משכורת פחות הוצאות קבועות + בפועל
+                </p>
               </div>
 
               {/* saving goal */}
@@ -922,11 +974,11 @@ export default function App() {
                 <div className="space-y-2 pt-1">
                   <h4 className="text-xs font-bold text-slate-400 uppercase">מסקנות מהירות</h4>
                   <div className="flex items-center gap-2 text-sm text-slate-700">
-                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${usagePct > 90 ? "bg-red-400" : usagePct > 70 ? "bg-amber-400" : "bg-emerald-400"}`} />
+                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${actualPct > 90 ? "bg-red-400" : actualPct > 70 ? "bg-amber-400" : "bg-emerald-400"}`} />
                     <span>
-                      {usagePct > 90 ? "הוצאות גבוהות — כדאי לבחון קיצוצים"
-                        : usagePct > 70 ? `ניצול ${usagePct.toFixed(0)}% מהמשכורת`
-                        : `שיעור חיסכון מצוין (${(100 - usagePct).toFixed(1)}%)`}
+                      {actualPct > 90 ? "הוצאות בפועל גבוהות — כדאי לבחון קיצוצים"
+                        : actualPct > 70 ? `ניצול בפועל ${actualPct.toFixed(0)}% מהמשכורת`
+                        : `שיעור חיסכון מצוין (${(100 - actualPct).toFixed(1)}%)`}
                     </span>
                   </div>
                   {num(savingGoal) > 0 && num(savingGoal) > remainingAfterExpenses && (
