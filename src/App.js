@@ -824,43 +824,55 @@ export default function App() {
   const setMonthData = (patch) =>
     setStore((prev) => ({ ...prev, months: { ...prev.months, [activeMonth]: { ...prev.months[activeMonth], ...patch } } }));
 
-  // ── derived values ──
-  const totalFixed = fixedExpenses.reduce((s, i) => s + num(i.amount), 0);
-  const totalVariable = variableExpenses.reduce((s, i) => s + num(i.estimated), 0);
-  const totalExpenses = totalFixed + totalVariable;
-  const salaryNum = num(salary);
-  const remainingAfterExpenses = salaryNum - totalExpenses;
-  const remainingAfterGoal = remainingAfterExpenses - num(savingGoal);
-  const savingsPct = salaryNum > 0 ? ((num(savingGoal) / salaryNum) * 100).toFixed(1) : "0";
-  const savingGoalPct = num(savingGoal) > 0 ? Math.min(100, ((salaryNum - totalExpenses) / num(savingGoal)) * 100) : 0;
+ // ── derived values ──
+const totalFixed = fixedExpenses.reduce((s, i) => s + num(i.amount), 0);
+const totalVariable = variableExpenses.reduce((s, i) => s + num(i.estimated), 0);
+const totalExpenses = totalFixed + totalVariable;
 
-  const actualTotal = useMemo(() => {
-    const varActual = variableExpenses.reduce((s, i) => s + num(i.actual), 0);
-    const catSpent  = categories.reduce((s, c) => s + num(c.spent), 0);
-    return varActual + catSpent;
-  }, [variableExpenses, categories]);
+const salaryNum = num(salary);
 
-  const remainingActual = salaryNum - (totalFixed + actualTotal);
-  const actualPct = salaryNum > 0 ? Math.min(100, ((totalFixed + actualTotal) / salaryNum) * 100) : 0;
+// ✅ בפועל = רק הוצאות משתנות בפועל (בלי categories.spent)
+const actualTotal = useMemo(() => {
+  return variableExpenses.reduce((s, i) => s + num(i.actual), 0);
+}, [variableExpenses]);
 
-  const autoEstimateMap = useMemo(() => {
-    const map = {};
-    variableExpenses.forEach((item) => { map[item.id] = calcAutoEstimate(item, store.months, activeMonth); });
-    return map;
-  }, [variableExpenses, store.months, activeMonth]);
+// ✅ היתרה בפועל = משכורת - (קבועות + משתנות בפועל)
+const remainingActual = salaryNum - (totalFixed + actualTotal);
 
-  // ── month management ──
-  const sortedMonths = Object.keys(store.months).sort().reverse();
+// נשאר לפי צפי (משאיר כמו שהיה, כי זה שדה "לפי צפי")
+const remainingAfterExpenses = salaryNum - totalExpenses;
 
-  const addNewMonth = (ym) => {
-    if (store.months[ym]) { setActiveMonth(ym); return; }
-    const templateVars = variableExpenses.map((item) => {
-      const auto = calcAutoEstimate(item, store.months, ym);
-      return { id: Date.now() + Math.random(), category: item.category, estimated: auto > 0 ? auto : item.estimated, actual: 0, estimatedManual: false };
-    });
-    setStore((prev) => ({ ...prev, months: { ...prev.months, [ym]: { ...emptyMonth(), variableExpenses: templateVars } } }));
-    setActiveMonth(ym);
-  };
+// ✅ מה שביקשת: כסף חופשי אחרי יעד = היתרה בפועל - יעד
+const remainingAfterGoal = remainingActual - num(savingGoal);
+
+// אחוז חיסכון מתוך ההכנסה (נשאר כמו שהיה)
+const savingsPct = salaryNum > 0 ? ((num(savingGoal) / salaryNum) * 100).toFixed(1) : "0";
+
+// ✅ התקדמות ליעד לפי בפועל (כמה מהיעד "מכוסה" ע"י מה שנשאר בפועל)
+const savingGoalPct =
+  num(savingGoal) > 0 ? Math.max(0, Math.min(100, (remainingActual / num(savingGoal)) * 100)) : 0;
+
+// ניצול מהמשכורת לפי בפועל (קבועות + משתנות בפועל)
+const actualPct = salaryNum > 0 ? Math.min(100, ((totalFixed + actualTotal) / salaryNum) * 100) : 0;
+
+const autoEstimateMap = useMemo(() => {
+  const map = {};
+  variableExpenses.forEach((item) => { map[item.id] = calcAutoEstimate(item, store.months, activeMonth); });
+  return map;
+}, [variableExpenses, store.months, activeMonth]);
+
+// ── month management ──
+const sortedMonths = Object.keys(store.months).sort().reverse();
+
+const addNewMonth = (ym) => {
+  if (store.months[ym]) { setActiveMonth(ym); return; }
+  const templateVars = variableExpenses.map((item) => {
+    const auto = calcAutoEstimate(item, store.months, ym);
+    return { id: Date.now() + Math.random(), category: item.category, estimated: auto > 0 ? auto : item.estimated, actual: 0, estimatedManual: false };
+  });
+  setStore((prev) => ({ ...prev, months: { ...prev.months, [ym]: { ...emptyMonth(), variableExpenses: templateVars } } }));
+  setActiveMonth(ym);
+};
 
   // ── salary inline edit ──
   const [editingSalary, setEditingSalary] = useState(false);
