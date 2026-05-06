@@ -23,12 +23,23 @@ import {
   TrendingDown,
   TrendingUp,
   ChevronLeft,
+  Tag,
 } from "lucide-react";
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = "budget-app-v2";
 const SYSTEM_CATEGORIES = ["מזון", "דלק", "בילויים", "קניות", "בריאות", "תחבורה", "אחר"];
+
+const CATEGORY_COLORS = {
+  מזון: "#fbbf24",
+  דלק: "#60a5fa",
+  בילויים: "#f87171",
+  קניות: "#a78bfa",
+  בריאות: "#34d399",
+  תחבורה: "#fb923c",
+  אחר: "#94a3b8",
+};
 
 // ─── date helpers ─────────────────────────────────────────────────────────────
 
@@ -75,8 +86,23 @@ function calcAutoEstimate(item, months, beforeMonth) {
 // ─── migration ────────────────────────────────────────────────────────────────
 
 function migrateVariableExpense(item) {
-  if (item.estimated !== undefined) return { estimatedManual: false, ...item };
-  return { id: item.id, category: item.category, estimated: num(item.amount ?? 0), actual: num(item.actual ?? 0), estimatedManual: false };
+  if (item.estimated !== undefined) {
+    return {
+      estimatedManual: false,
+      description: item.description || "",
+      date: item.date || new Date().toISOString(),
+      ...item,
+    };
+  }
+  return {
+    id: item.id,
+    category: item.category,
+    estimated: num(item.amount ?? 0),
+    actual: num(item.actual ?? 0),
+    estimatedManual: false,
+    description: "",
+    date: new Date().toISOString(),
+  };
 }
 
 // ─── storage ──────────────────────────────────────────────────────────────────
@@ -115,7 +141,7 @@ function exportCSV(salary, fixedExpenses, months) {
       const est = num(e.estimated), act = num(e.actual);
       rows.push([label, e.category, resolveSystemCategory(e.category), est, act, act - est, "משתנה"]);
     });
-    (months[ym].categories || []).forEach((c) => rows.push([label, c.name, "", num(c.budget), num(c.spent), num(c.spent) - num(c.budget), "קטגוריה"]));
+    (months[ym].categories || []).forEach((c) => rows.push([label, c.name, "", num(c.budget), num(c.spent), num(c.spent) - num(c.budget), "קטגוריה (מעקב בלבד)"]));
   });
   const BOM = "\uFEFF";
   const csv = BOM + rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
@@ -214,27 +240,43 @@ const VariableExpenseRow = ({ item, onEdit, onDelete, onAddExpense, autoEstimate
   const diff = num(item.actual) - num(item.estimated);
   const diffColor = diff < 0 ? "text-emerald-600" : diff > 0 ? "text-red-500" : "text-slate-400";
   const diffLabel = diff === 0 ? "זהה" : diff < 0 ? `↓ ₪${Math.abs(diff).toLocaleString()}` : `↑ ₪${diff.toLocaleString()}`;
-  const sysCategory = resolveSystemCategory(item.category);
   const isManual = !!item.estimatedManual;
-
-  const EditableCell = ({ field, value, isText = false }) => {
-    if (editField === field) return (
-      <div className="flex items-center gap-1">
-        <input className={cellInputCls + (isText ? " w-28" : "")} type={isText ? "text" : "number"} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleKey} autoFocus />
-        <button onClick={commit} className="p-1 text-emerald-600"><Check className="w-3.5 h-3.5" /></button>
-        <button onClick={() => setEditField(null)} className="p-1 text-slate-400"><X className="w-3.5 h-3.5" /></button>
-      </div>
-    );
-    return <button onClick={() => startEdit(field, value)} className="text-sm font-medium text-right w-full hover:text-indigo-600 text-slate-700">{isText ? value : `₪${num(value).toLocaleString()}`}</button>;
-  };
+  const color = CATEGORY_COLORS[item.category] || "#94a3b8";
+  const dateStr = item.date ? new Date(item.date).toLocaleDateString("he-IL") : "";
 
   return (
     <>
       <tr className="hover:bg-slate-50/50 transition-colors group">
+        {/* קטגוריה + תיאור + תאריך */}
         <td className="px-4 py-3">
-          <EditableCell field="category" value={item.category} isText />
-          <span className="text-[10px] text-slate-400 mt-0.5 block">{sysCategory}</span>
+          <div className="flex items-center gap-3">
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-white text-sm font-bold"
+              style={{ backgroundColor: color }}
+            >
+              {item.category.charAt(0)}
+            </div>
+            <div className="min-w-0">
+              {editField === "category" ? (
+                <div className="flex items-center gap-1">
+                  <input className={cellInputCls + " w-28"} type="text" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleKey} autoFocus />
+                  <button onClick={commit} className="p-1 text-emerald-600"><Check className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => setEditField(null)} className="p-1 text-slate-400"><X className="w-3.5 h-3.5" /></button>
+                </div>
+              ) : (
+                <button onClick={() => startEdit("category", item.category)} className="font-semibold text-slate-800 text-sm hover:text-indigo-600 text-right block truncate max-w-[120px]">
+                  {item.description || item.category}
+                </button>
+              )}
+              <p className="text-[10px] text-slate-400 mt-0.5 flex gap-1.5">
+                <span>{item.category}</span>
+                {dateStr && <><span>·</span><span>{dateStr}</span></>}
+              </p>
+            </div>
+          </div>
         </td>
+
+        {/* צפי */}
         <td className="px-3 py-3 text-left">
           <div className="flex items-center gap-1">
             <div className="flex-1">
@@ -251,29 +293,60 @@ const VariableExpenseRow = ({ item, onEdit, onDelete, onAddExpense, autoEstimate
                 </button>
               )}
               {!isManual && autoEstimate !== null && autoEstimate > 0 && <p className="text-[9px] text-slate-400 mt-0.5">ממוצע ₪{autoEstimate.toLocaleString()}</p>}
-              {!isManual && (autoEstimate === null || autoEstimate === 0) && <p className="text-[9px] text-slate-400 mt-0.5">מחושב לפי ממוצע 3 חודשים</p>}
             </div>
             {isManual && <button onClick={resetToAuto} title="איפוס לצפי אוטומטי" className="flex-shrink-0 p-1 text-slate-300 hover:text-indigo-500 transition-colors"><RotateCcw className="w-3 h-3" /></button>}
           </div>
         </td>
+
+        {/* בפועל */}
         <td className="px-3 py-3 text-left">
           <div className="flex items-center gap-1.5">
-            <EditableCell field="actual" value={item.actual} />
-            <button onClick={() => { setAddingExpense((v) => !v); setExpenseDraft(""); }} title="הוסף הוצאה" className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center transition-colors ${addingExpense ? "bg-rose-500 text-white" : "bg-slate-100 text-slate-400 hover:bg-rose-100 hover:text-rose-500"}`}>
+            {editField === "actual" ? (
+              <div className="flex items-center gap-1">
+                <input className={cellInputCls} type="number" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleKey} autoFocus />
+                <button onClick={commit} className="p-1 text-emerald-600"><Check className="w-3.5 h-3.5" /></button>
+                <button onClick={() => setEditField(null)} className="p-1 text-slate-400"><X className="w-3.5 h-3.5" /></button>
+              </div>
+            ) : (
+              <button onClick={() => startEdit("actual", item.actual)} className="text-sm font-medium text-slate-700 hover:text-indigo-600">
+                ₪{num(item.actual).toLocaleString()}
+              </button>
+            )}
+            <button
+              onClick={() => { setAddingExpense((v) => !v); setExpenseDraft(""); }}
+              title="הוסף הוצאה"
+              className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center transition-colors ${addingExpense ? "bg-rose-500 text-white" : "bg-slate-100 text-slate-400 hover:bg-rose-100 hover:text-rose-500"}`}
+            >
               <Plus className="w-3 h-3" />
             </button>
           </div>
         </td>
+
+        {/* הפרש */}
         <td className="px-3 py-3 text-left"><span className={`text-xs font-semibold ${diffColor}`}>{diffLabel}</span></td>
-        <td className="px-3 py-3"><div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={onDelete} className="p-1 text-slate-400 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button></div></td>
+
+        {/* מחיקה */}
+        <td className="px-3 py-3">
+          <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+            <button onClick={onDelete} className="p-1 text-slate-400 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
+          </div>
+        </td>
       </tr>
+
+      {/* שורת הוספת הוצאה */}
       {addingExpense && (
         <tr className="bg-rose-50/50 border-t border-rose-100">
           <td className="px-4 py-2 text-xs text-slate-500 text-right">הוסף ל<span className="font-semibold text-slate-700">{item.category}</span>:</td>
           <td className="px-3 py-2 text-xs text-slate-400">סה"כ: ₪{num(item.actual).toLocaleString()}</td>
           <td className="px-3 py-2" colSpan={2}>
             <div className="flex items-center gap-2">
-              <input className="w-24 border border-rose-200 rounded-lg px-2 py-1 text-sm text-left text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-300" type="number" placeholder="₪ סכום" value={expenseDraft} onChange={(e) => setExpenseDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") commitExpense(); if (e.key === "Escape") setAddingExpense(false); }} autoFocus />
+              <input
+                className="w-24 border border-rose-200 rounded-lg px-2 py-1 text-sm text-left text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-300"
+                type="number" placeholder="₪ סכום" value={expenseDraft}
+                onChange={(e) => setExpenseDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") commitExpense(); if (e.key === "Escape") setAddingExpense(false); }}
+                autoFocus
+              />
               <button onClick={commitExpense} className="p-1 text-emerald-600"><Check className="w-4 h-4" /></button>
               <button onClick={() => setAddingExpense(false)} className="p-1 text-slate-400"><X className="w-4 h-4" /></button>
             </div>
@@ -369,7 +442,6 @@ const HomeScreen = ({ salaryNum, totalFixed, actualTotal, remainingActual, actua
 
   return (
     <div className="space-y-5">
-      {/* Hero card */}
       <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-3xl p-6 text-white shadow-xl">
         <div className="flex items-center justify-between mb-1">
           <p className="text-indigo-200 text-xs font-medium uppercase tracking-wide">
@@ -389,25 +461,16 @@ const HomeScreen = ({ salaryNum, totalFixed, actualTotal, remainingActual, actua
             </button>
           )}
         </div>
-
         <p className="text-indigo-100 text-sm mb-1">יתרה בפועל החודש</p>
-        <h1 className={`text-5xl font-bold mb-4 ${remainingActual < 0 ? "text-red-300" : "text-white"}`}>
-          ₪{remainingActual.toLocaleString()}
-        </h1>
-
-        {/* mini progress */}
+        <h1 className={`text-5xl font-bold mb-4 ${remainingActual < 0 ? "text-red-300" : "text-white"}`}>₪{remainingActual.toLocaleString()}</h1>
         <div className="space-y-1">
-          <div className="flex justify-between text-xs text-indigo-200">
-            <span>ניצול מהמשכורת</span>
-            <span>{actualPct.toFixed(0)}%</span>
-          </div>
+          <div className="flex justify-between text-xs text-indigo-200"><span>ניצול מהמשכורת</span><span>{actualPct.toFixed(0)}%</span></div>
           <div className="h-2 bg-white/20 rounded-full overflow-hidden">
             <div className={`h-full rounded-full transition-all ${actualPct > 90 ? "bg-red-400" : actualPct > 70 ? "bg-amber-300" : "bg-emerald-400"}`} style={{ width: `${actualPct}%` }} />
           </div>
         </div>
       </div>
 
-      {/* Quick stats row */}
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
           <p className="text-[10px] text-slate-400 uppercase font-medium mb-1">הוצאות קבועות</p>
@@ -423,13 +486,9 @@ const HomeScreen = ({ salaryNum, totalFixed, actualTotal, remainingActual, actua
         </div>
       </div>
 
-      {/* Saving goal card */}
       <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-bold text-slate-800 flex items-center gap-2">
-            <Target className="w-4 h-4 text-indigo-500" />
-            יעד חיסכון חודשי
-          </h3>
+          <h3 className="font-bold text-slate-800 flex items-center gap-2"><Target className="w-4 h-4 text-indigo-500" />יעד חיסכון חודשי</h3>
           {editingGoal ? (
             <div className="flex items-center gap-1">
               <span className="text-xs text-slate-400">₪</span>
@@ -445,9 +504,7 @@ const HomeScreen = ({ salaryNum, totalFixed, actualTotal, remainingActual, actua
         </div>
         {num(savingGoal) > 0 ? (
           <>
-            <div className="flex justify-between text-xs text-slate-500 mb-1.5">
-              <span>התקדמות</span><span>{savingGoalPct.toFixed(0)}%</span>
-            </div>
+            <div className="flex justify-between text-xs text-slate-500 mb-1.5"><span>התקדמות</span><span>{savingGoalPct.toFixed(0)}%</span></div>
             <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden mb-3">
               <div style={{ width: `${savingGoalPct}%` }} className={`h-full rounded-full transition-all ${savingGoalPct >= 100 ? "bg-emerald-500" : savingGoalPct >= 60 ? "bg-amber-400" : "bg-red-400"}`} />
             </div>
@@ -462,7 +519,6 @@ const HomeScreen = ({ salaryNum, totalFixed, actualTotal, remainingActual, actua
         )}
       </div>
 
-      {/* Insights */}
       {(overBudgetCats.length > 0 || (num(savingGoal) > 0 && num(savingGoal) > remainingAfterExpenses)) && (
         <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 space-y-2">
           <h4 className="text-xs font-bold text-amber-700 uppercase">התראות</h4>
@@ -481,25 +537,14 @@ const HomeScreen = ({ salaryNum, totalFixed, actualTotal, remainingActual, actua
         </div>
       )}
 
-      {/* quick nav shortcuts */}
       <div className="grid grid-cols-2 gap-3">
         <button onClick={() => setActiveTab("expenses")} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex items-center gap-3 hover:border-rose-200 transition-colors text-right">
-          <div className="w-9 h-9 bg-rose-50 rounded-xl flex items-center justify-center flex-shrink-0">
-            <ReceiptText className="w-4 h-4 text-rose-500" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-700">הוצאות</p>
-            <p className="text-xs text-slate-400">{variableExpenses.length} פריטים</p>
-          </div>
+          <div className="w-9 h-9 bg-rose-50 rounded-xl flex items-center justify-center flex-shrink-0"><ReceiptText className="w-4 h-4 text-rose-500" /></div>
+          <div><p className="text-sm font-semibold text-slate-700">הוצאות</p><p className="text-xs text-slate-400">{variableExpenses.length} פריטים</p></div>
         </button>
         <button onClick={() => setActiveTab("budget")} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex items-center gap-3 hover:border-violet-200 transition-colors text-right">
-          <div className="w-9 h-9 bg-violet-50 rounded-xl flex items-center justify-center flex-shrink-0">
-            <LayoutList className="w-4 h-4 text-violet-500" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-700">תקציב</p>
-            <p className="text-xs text-slate-400">{categories.length} קטגוריות</p>
-          </div>
+          <div className="w-9 h-9 bg-violet-50 rounded-xl flex items-center justify-center flex-shrink-0"><LayoutList className="w-4 h-4 text-violet-500" /></div>
+          <div><p className="text-sm font-semibold text-slate-700">תקציב</p><p className="text-xs text-slate-400">{categories.length} קטגוריות</p></div>
         </button>
       </div>
     </div>
@@ -513,7 +558,6 @@ const BudgetScreen = ({ categories, fixedExpenses, editCat, deleteCat, openAddCa
 
   return (
     <div className="space-y-5">
-      {/* summary strip */}
       {(categories.length > 0 || fixedExpenses.length > 0) && (
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
@@ -531,15 +575,10 @@ const BudgetScreen = ({ categories, fixedExpenses, editCat, deleteCat, openAddCa
         </div>
       )}
 
-      {/* Fixed expenses */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/30 flex justify-between items-center">
-          <h3 className="font-bold text-slate-800 flex items-center gap-2">
-            <Banknote className="w-4 h-4 text-slate-400" /> הוצאות קבועות
-          </h3>
-          <button onClick={openAddFixed} className="flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors">
-            <Plus className="w-3.5 h-3.5" /> הוסף
-          </button>
+          <h3 className="font-bold text-slate-800 flex items-center gap-2"><Banknote className="w-4 h-4 text-slate-400" /> הוצאות קבועות</h3>
+          <button onClick={openAddFixed} className="flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"><Plus className="w-3.5 h-3.5" /> הוסף</button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-right">
@@ -555,15 +594,10 @@ const BudgetScreen = ({ categories, fixedExpenses, editCat, deleteCat, openAddCa
         )}
       </div>
 
-      {/* Budget categories */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 bg-violet-50/30 flex justify-between items-center">
-          <h3 className="font-bold text-slate-800 flex items-center gap-2">
-            <LayoutList className="w-4 h-4 text-violet-400" /> קטגוריות תקציב
-          </h3>
-          <button onClick={openAddCat} className="flex items-center gap-1 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition-colors">
-            <Plus className="w-3.5 h-3.5" /> הוסף
-          </button>
+          <h3 className="font-bold text-slate-800 flex items-center gap-2"><LayoutList className="w-4 h-4 text-violet-400" /> קטגוריות תקציב</h3>
+          <button onClick={openAddCat} className="flex items-center gap-1 text-xs font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition-colors"><Plus className="w-3.5 h-3.5" /> הוסף</button>
         </div>
         {categories.length === 0 ? (
           <p className="text-center text-slate-400 text-sm py-8">אין קטגוריות תקציב — לחץ + להוספה</p>
@@ -584,14 +618,34 @@ const BudgetScreen = ({ categories, fixedExpenses, editCat, deleteCat, openAddCa
   );
 };
 
-// ── ExpensesScreen ──
+// ── ExpensesScreen ── (updated with pie chart + description + date)
 const ExpensesScreen = ({ variableExpenses, editVariable, deleteVariable, addExpenseToVariable, autoEstimateMap, openAddVar, activeMonth }) => {
   const totalEst = variableExpenses.reduce((s, i) => s + num(i.estimated), 0);
   const totalAct = variableExpenses.reduce((s, i) => s + num(i.actual), 0);
   const diff = totalAct - totalEst;
 
+  const chartData = useMemo(() => {
+    const totals = variableExpenses.reduce((acc, item) => {
+      acc[item.category] = (acc[item.category] || 0) + num(item.actual);
+      return acc;
+    }, {});
+    const totalSum = Object.values(totals).reduce((s, v) => s + v, 0);
+    let cumulative = 0;
+    return Object.entries(totals)
+      .filter(([, v]) => v > 0)
+      .map(([category, value]) => {
+        const percent = totalSum > 0 ? (value / totalSum) * 100 : 0;
+        const start = cumulative;
+        cumulative += percent;
+        return { category, value, percent, startPercent: start, color: CATEGORY_COLORS[category] || "#94a3b8" };
+      });
+  }, [variableExpenses]);
+
+  const getCoords = (pct) => [Math.cos(2 * Math.PI * pct), Math.sin(2 * Math.PI * pct)];
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
+      {/* סטטיסטיקות */}
       {variableExpenses.length > 0 && (
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
@@ -605,12 +659,56 @@ const ExpensesScreen = ({ variableExpenses, editVariable, deleteVariable, addExp
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
             <p className="text-[10px] text-slate-400 uppercase font-medium mb-1">הפרש</p>
             <p className={`text-lg font-bold ${diff > 0 ? "text-red-500" : diff < 0 ? "text-emerald-600" : "text-slate-400"}`}>
-              {diff > 0 ? "+" : ""}{diff !== 0 ? `₪${Math.abs(diff).toLocaleString()}` : "זהה"}
+              {diff === 0 ? "זהה" : `${diff > 0 ? "+" : ""}₪${Math.abs(diff).toLocaleString()}`}
             </p>
           </div>
         </div>
       )}
 
+      {/* גרף עוגה */}
+      {chartData.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 bg-indigo-50/30">
+            <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
+              <PieChartIcon className="w-4 h-4 text-indigo-500" /> התפלגות הוצאות
+            </h3>
+          </div>
+          <div className="flex items-center gap-6 px-5 py-5">
+            <div className="relative w-32 h-32 flex-shrink-0">
+              <svg viewBox="-1 -1 2 2" className="w-full h-full -rotate-90">
+                {chartData.map((slice, i) => {
+                  if (slice.percent >= 99.9) return <circle key={i} r="1" cx="0" cy="0" fill={slice.color} />;
+                  const [sx, sy] = getCoords(slice.startPercent / 100);
+                  const [ex, ey] = getCoords((slice.startPercent + slice.percent) / 100);
+                  return (
+                    <path
+                      key={i}
+                      d={`M ${sx} ${sy} A 1 1 0 ${slice.percent > 50 ? 1 : 0} 1 ${ex} ${ey} L 0 0`}
+                      fill={slice.color}
+                    />
+                  );
+                })}
+                <circle r="0.58" cx="0" cy="0" fill="white" />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-[9px] text-slate-400">סה"כ</span>
+                <span className="text-xs font-bold text-slate-800">₪{totalAct.toLocaleString()}</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 flex-1">
+              {chartData.map((slice, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm">
+                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: slice.color }} />
+                  <span className="text-slate-600 font-medium truncate">{slice.category}</span>
+                  <span className="text-slate-400 text-xs">({Math.round(slice.percent)}%)</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* טבלת הוצאות */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 bg-rose-50/20 flex justify-between items-center">
           <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -626,7 +724,7 @@ const ExpensesScreen = ({ variableExpenses, editVariable, deleteVariable, addExp
             {variableExpenses.length > 0 && (
               <thead>
                 <tr className="bg-slate-50/50 text-xs text-slate-400 font-medium">
-                  <th className="px-4 py-2 text-right">קטגוריה</th>
+                  <th className="px-4 py-2 text-right">קטגוריה / תיאור</th>
                   <th className="px-3 py-2 text-left">צפי</th>
                   <th className="px-3 py-2 text-left">בפועל</th>
                   <th className="px-3 py-2 text-left">הפרש</th>
@@ -666,83 +764,51 @@ const ExpensesScreen = ({ variableExpenses, editVariable, deleteVariable, addExp
 
 // ── HistoryScreen ──
 const HistoryScreen = ({ store, activeMonth, setActiveMonth, currentMonth, sortedMonths, addNewMonth, totalFixed, salaryNum, newMonthModal, setNewMonthModal, newMonthVal, setNewMonthVal, handleReset, exportCSV, salary, fixedExpenses }) => {
-  const isPastMonth = activeMonth < currentMonth;
-
   return (
     <div className="space-y-5">
-      {/* Month selector */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm px-5 py-4">
-        <div className="flex items-center gap-3 mb-4">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          <span className="text-sm font-semibold text-slate-700">בחר חודש לצפייה</span>
-        </div>
+        <div className="flex items-center gap-3 mb-4"><Calendar className="w-4 h-4 text-slate-400" /><span className="text-sm font-semibold text-slate-700">בחר חודש לצפייה</span></div>
         <div className="relative">
-          <select
-            value={activeMonth}
-            onChange={(e) => setActiveMonth(e.target.value)}
-            className="appearance-none w-full bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-sm rounded-xl pr-4 pl-8 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 cursor-pointer"
-          >
-            {sortedMonths.map((ym) => (
-              <option key={ym} value={ym}>{formatMonthLabel(ym)}{ym === currentMonth ? " (נוכחי)" : ""}</option>
-            ))}
+          <select value={activeMonth} onChange={(e) => setActiveMonth(e.target.value)} className="appearance-none w-full bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-sm rounded-xl pr-4 pl-8 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-300 cursor-pointer">
+            {sortedMonths.map((ym) => (<option key={ym} value={ym}>{formatMonthLabel(ym)}{ym === currentMonth ? " (נוכחי)" : ""}</option>))}
           </select>
           <ChevronDown className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400 pointer-events-none" />
         </div>
         <div className="flex gap-2 mt-3">
           {activeMonth === currentMonth ? (
-            <span className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-600 border border-emerald-100 px-2.5 py-1 rounded-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> חודש נוכחי
-            </span>
+            <span className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-600 border border-emerald-100 px-2.5 py-1 rounded-full"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" /> חודש נוכחי</span>
           ) : (
-            <span className="flex items-center gap-1 text-xs bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-1 rounded-full">
-              <History className="w-3 h-3" /> מציג חודש קודם
-            </span>
+            <span className="flex items-center gap-1 text-xs bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-1 rounded-full"><History className="w-3 h-3" /> מציג חודש קודם</span>
           )}
-          <button
-            onClick={() => { setNewMonthVal(currentMonth); setNewMonthModal(true); }}
-            className="flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1 rounded-full transition-colors mr-auto"
-          >
+          <button onClick={() => { setNewMonthVal(currentMonth); setNewMonthModal(true); }} className="flex items-center gap-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1 rounded-full transition-colors mr-auto">
             <Plus className="w-3 h-3" /> הוסף חודש
           </button>
         </div>
       </div>
 
-      {/* All months list */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/30">
-          <h3 className="font-bold text-slate-800 flex items-center gap-2">
-            <History className="w-4 h-4 text-slate-400" /> היסטוריית חודשים
-          </h3>
+          <h3 className="font-bold text-slate-800 flex items-center gap-2"><History className="w-4 h-4 text-slate-400" /> היסטוריית חודשים</h3>
         </div>
         <div className="divide-y divide-slate-100">
           {sortedMonths.length === 0 ? (
             <p className="text-center text-slate-400 text-sm py-8">אין חודשים קודמים</p>
           ) : sortedMonths.map((ym) => {
             const md = store.months[ym];
-            const mVarEst = (md.variableExpenses || []).reduce((s, i) => s + num(i.estimated ?? 0), 0);
             const mVarAct = (md.variableExpenses || []).reduce((s, i) => s + num(i.actual ?? 0), 0);
-            const mCatSpent = (md.categories || []).reduce((s, c) => s + num(c.spent), 0);
-            const mActual = mVarAct + mCatSpent;
+            const mActual = mVarAct;
             const mRem = salaryNum - (totalFixed + mActual);
             const isActive = ym === activeMonth;
-
             return (
-              <button
-                key={ym}
-                onClick={() => setActiveMonth(ym)}
-                className={`w-full flex items-center px-5 py-4 transition-colors ${isActive ? "bg-indigo-50" : "hover:bg-slate-50"}`}
-              >
+              <button key={ym} onClick={() => setActiveMonth(ym)} className={`w-full flex items-center px-5 py-4 transition-colors ${isActive ? "bg-indigo-50" : "hover:bg-slate-50"}`}>
                 <div className="flex-1 text-right">
                   <p className={`font-semibold text-sm ${isActive ? "text-indigo-700" : "text-slate-700"}`}>
-                    {formatMonthLabel(ym)}
-                    {ym === currentMonth && <span className="mr-2 text-[10px] bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded-full">נוכחי</span>}
+                    {formatMonthLabel(ym)}{ym === currentMonth && <span className="mr-2 text-[10px] bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded-full">נוכחי</span>}
                   </p>
                   <p className="text-xs text-slate-400 mt-0.5">הוצאות בפועל: ₪{(totalFixed + mActual).toLocaleString()}</p>
                 </div>
                 <div className="text-left mr-3">
-                  <p className={`text-base font-bold ${mRem >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                    {mRem >= 0 ? "+" : ""}₪{mRem.toLocaleString()}
-                  </p>
+                  <p className={`text-base font-bold ${mRem >= 0 ? "text-emerald-600" : "text-red-500"}`}>{mRem >= 0 ? "+" : ""}₪{mRem.toLocaleString()}</p>
                   <p className="text-[10px] text-slate-400 mt-0.5">יתרה</p>
                 </div>
                 <ChevronLeft className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-indigo-400" : "text-slate-300"}`} />
@@ -752,17 +818,11 @@ const HistoryScreen = ({ store, activeMonth, setActiveMonth, currentMonth, sorte
         </div>
       </div>
 
-      {/* export + reset */}
       <div className="space-y-3">
-        <button
-          onClick={() => exportCSV(salary, fixedExpenses, store.months)}
-          className="w-full flex items-center justify-center gap-2 bg-white border border-slate-200 py-3 rounded-2xl text-slate-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors text-sm font-medium"
-        >
+        <button onClick={() => exportCSV(salary, fixedExpenses, store.months)} className="w-full flex items-center justify-center gap-2 bg-white border border-slate-200 py-3 rounded-2xl text-slate-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors text-sm font-medium">
           <Download className="w-4 h-4" /> ייצוא כל הנתונים ל-CSV
         </button>
-        <button onClick={handleReset} className="w-full py-3 bg-white border border-slate-200 rounded-2xl text-slate-400 text-xs hover:border-red-300 hover:text-red-400 transition-all">
-          איפוס כל הנתונים
-        </button>
+        <button onClick={handleReset} className="w-full py-3 bg-white border border-slate-200 rounded-2xl text-slate-400 text-xs hover:border-red-300 hover:text-red-400 transition-all">איפוס כל הנתונים</button>
       </div>
     </div>
   );
@@ -777,22 +837,13 @@ const BottomNav = ({ activeTab, setActiveTab }) => {
     { id: "expenses", label: "הוצאות", icon: ReceiptText },
     { id: "history", label: "היסטוריה", icon: Clock },
   ];
-
   return (
     <div className="fixed bottom-0 right-0 left-0 z-40 bg-white border-t border-slate-100 shadow-lg" dir="rtl">
       <div className="max-w-lg mx-auto px-2 py-2 flex items-center justify-around">
         {tabs.map(({ id, label, icon: Icon }) => {
           const isActive = activeTab === id;
           return (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id)}
-              className={`flex flex-col items-center gap-1 px-4 py-2 rounded-2xl transition-all ${
-                isActive
-                  ? "bg-indigo-50 text-indigo-600"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
+            <button key={id} onClick={() => setActiveTab(id)} className={`flex flex-col items-center gap-1 px-4 py-2 rounded-2xl transition-all ${isActive ? "bg-indigo-50 text-indigo-600" : "text-slate-400 hover:text-slate-600"}`}>
               <Icon className={`w-5 h-5 ${isActive ? "stroke-2" : "stroke-1.5"}`} />
               <span className={`text-[10px] font-medium ${isActive ? "text-indigo-600" : "text-slate-400"}`}>{label}</span>
             </button>
@@ -824,69 +875,50 @@ export default function App() {
   const setMonthData = (patch) =>
     setStore((prev) => ({ ...prev, months: { ...prev.months, [activeMonth]: { ...prev.months[activeMonth], ...patch } } }));
 
- // ── derived values ──
-const totalFixed = fixedExpenses.reduce((s, i) => s + num(i.amount), 0);
-const totalVariable = variableExpenses.reduce((s, i) => s + num(i.estimated), 0);
-const totalExpenses = totalFixed + totalVariable;
+  const totalFixed = fixedExpenses.reduce((s, i) => s + num(i.amount), 0);
+  const totalVariable = variableExpenses.reduce((s, i) => s + num(i.estimated), 0);
+  const totalExpenses = totalFixed + totalVariable;
+  const salaryNum = num(salary);
 
-const salaryNum = num(salary);
+  const actualTotal = useMemo(() => variableExpenses.reduce((s, i) => s + num(i.actual), 0), [variableExpenses]);
+  const remainingActual = salaryNum - (totalFixed + actualTotal);
+  const remainingAfterExpenses = salaryNum - totalExpenses;
+  const remainingAfterGoal = remainingActual - num(savingGoal);
+  const savingsPct = salaryNum > 0 ? ((num(savingGoal) / salaryNum) * 100).toFixed(1) : "0";
+  const savingGoalPct = num(savingGoal) > 0 ? Math.max(0, Math.min(100, (remainingActual / num(savingGoal)) * 100)) : 0;
+  const actualPct = salaryNum > 0 ? Math.min(100, ((totalFixed + actualTotal) / salaryNum) * 100) : 0;
 
-// ✅ בפועל = רק הוצאות משתנות בפועל (בלי categories.spent)
-const actualTotal = useMemo(() => {
-  return variableExpenses.reduce((s, i) => s + num(i.actual), 0);
-}, [variableExpenses]);
+  const autoEstimateMap = useMemo(() => {
+    const map = {};
+    variableExpenses.forEach((item) => { map[item.id] = calcAutoEstimate(item, store.months, activeMonth); });
+    return map;
+  }, [variableExpenses, store.months, activeMonth]);
 
-// ✅ היתרה בפועל = משכורת - (קבועות + משתנות בפועל)
-const remainingActual = salaryNum - (totalFixed + actualTotal);
+  const sortedMonths = Object.keys(store.months).sort().reverse();
 
-// נשאר לפי צפי (משאיר כמו שהיה, כי זה שדה "לפי צפי")
-const remainingAfterExpenses = salaryNum - totalExpenses;
+  const addNewMonth = (ym) => {
+    if (store.months[ym]) { setActiveMonth(ym); return; }
+    const templateVars = variableExpenses.map((item) => {
+      const auto = calcAutoEstimate(item, store.months, ym);
+      return { id: Date.now() + Math.random(), category: item.category, estimated: auto > 0 ? auto : item.estimated, actual: 0, estimatedManual: false, description: "", date: new Date().toISOString() };
+    });
+    setStore((prev) => ({ ...prev, months: { ...prev.months, [ym]: { ...emptyMonth(), variableExpenses: templateVars } } }));
+    setActiveMonth(ym);
+  };
 
-// ✅ מה שביקשת: כסף חופשי אחרי יעד = היתרה בפועל - יעד
-const remainingAfterGoal = remainingActual - num(savingGoal);
-
-// אחוז חיסכון מתוך ההכנסה (נשאר כמו שהיה)
-const savingsPct = salaryNum > 0 ? ((num(savingGoal) / salaryNum) * 100).toFixed(1) : "0";
-
-// ✅ התקדמות ליעד לפי בפועל (כמה מהיעד "מכוסה" ע"י מה שנשאר בפועל)
-const savingGoalPct =
-  num(savingGoal) > 0 ? Math.max(0, Math.min(100, (remainingActual / num(savingGoal)) * 100)) : 0;
-
-// ניצול מהמשכורת לפי בפועל (קבועות + משתנות בפועל)
-const actualPct = salaryNum > 0 ? Math.min(100, ((totalFixed + actualTotal) / salaryNum) * 100) : 0;
-
-const autoEstimateMap = useMemo(() => {
-  const map = {};
-  variableExpenses.forEach((item) => { map[item.id] = calcAutoEstimate(item, store.months, activeMonth); });
-  return map;
-}, [variableExpenses, store.months, activeMonth]);
-
-// ── month management ──
-const sortedMonths = Object.keys(store.months).sort().reverse();
-
-const addNewMonth = (ym) => {
-  if (store.months[ym]) { setActiveMonth(ym); return; }
-  const templateVars = variableExpenses.map((item) => {
-    const auto = calcAutoEstimate(item, store.months, ym);
-    return { id: Date.now() + Math.random(), category: item.category, estimated: auto > 0 ? auto : item.estimated, actual: 0, estimatedManual: false };
-  });
-  setStore((prev) => ({ ...prev, months: { ...prev.months, [ym]: { ...emptyMonth(), variableExpenses: templateVars } } }));
-  setActiveMonth(ym);
-};
-
-  // ── salary inline edit ──
+  // salary
   const [editingSalary, setEditingSalary] = useState(false);
   const [salaryDraft, setSalaryDraft] = useState("");
   const openSalaryEdit = () => { setSalaryDraft(salary); setEditingSalary(true); };
   const commitSalary = () => { setStore_({ salary: parseFloat(salaryDraft) || "" }); setEditingSalary(false); };
 
-  // ── saving goal inline edit ──
+  // saving goal
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalDraft, setGoalDraft] = useState("");
   const openGoalEdit = () => { setGoalDraft(savingGoal); setEditingGoal(true); };
   const commitGoal = () => { setMonthData({ savingGoal: parseFloat(goalDraft) || "" }); setEditingGoal(false); };
 
-  // ── add fixed ──
+  // add fixed
   const [addFixedModal, setAddFixedModal] = useState(false);
   const [addFixedForm, setAddFixedForm] = useState({ category: "", amount: "" });
   const openAddFixed = () => { setAddFixedForm({ category: "", amount: "" }); setAddFixedModal(true); };
@@ -896,17 +928,25 @@ const addNewMonth = (ym) => {
     setAddFixedModal(false);
   };
 
-  // ── add variable ──
+  // add variable
   const [addVarModal, setAddVarModal] = useState(false);
-  const [addVarForm, setAddVarForm] = useState({ category: "", estimated: "", actual: "" });
-  const openAddVar = () => { setAddVarForm({ category: "", estimated: "", actual: "" }); setAddVarModal(true); };
+  const [addVarForm, setAddVarForm] = useState({ category: "", estimated: "", actual: "", description: "" });
+  const openAddVar = () => { setAddVarForm({ category: "", estimated: "", actual: "", description: "" }); setAddVarModal(true); };
   const commitAddVar = () => {
     if (!addVarForm.category.trim()) return;
     const draftItem = { category: addVarForm.category, estimatedManual: false };
     const auto = calcAutoEstimate(draftItem, store.months, activeMonth);
     const estimatedVal = addVarForm.estimated ? parseFloat(addVarForm.estimated) : (auto ?? 0);
     setMonthData({
-      variableExpenses: [...variableExpenses, { id: Date.now(), category: addVarForm.category.trim(), estimated: estimatedVal, actual: parseFloat(addVarForm.actual) || 0, estimatedManual: !!addVarForm.estimated }],
+      variableExpenses: [...variableExpenses, {
+        id: Date.now(),
+        category: addVarForm.category.trim(),
+        estimated: estimatedVal,
+        actual: parseFloat(addVarForm.actual) || 0,
+        estimatedManual: !!addVarForm.estimated,
+        description: addVarForm.description || "",
+        date: new Date().toISOString(),
+      }],
     });
     setAddVarModal(false);
   };
@@ -918,7 +958,7 @@ const addNewMonth = (ym) => {
   const addExpenseToVariable = (id, amount) =>
     setMonthData({ variableExpenses: variableExpenses.map((i) => i.id === id ? { ...i, actual: num(i.actual) + amount } : i) });
 
-  // ── budget categories ──
+  // budget categories
   const [catModal, setCatModal] = useState(false);
   const [catForm, setCatForm] = useState({ name: "", budget: "" });
   const openAddCat = () => { setCatForm({ name: "", budget: "" }); setCatModal(true); };
@@ -930,11 +970,11 @@ const addNewMonth = (ym) => {
   const editCat = (u) => setMonthData({ categories: categories.map((c) => (c.id === u.id ? u : c)) });
   const deleteCat = (id) => setMonthData({ categories: categories.filter((c) => c.id !== id) });
 
-  // ── new month modal ──
+  // new month modal
   const [newMonthModal, setNewMonthModal] = useState(false);
   const [newMonthVal, setNewMonthVal] = useState(currentMonth);
 
-  // ── reset ──
+  // reset
   const handleReset = () => {
     if (window.confirm("למחוק את כל הנתונים ולהתחיל מחדש?")) {
       setStore({ salary: "", fixedExpenses: [], months: { [currentMonth]: emptyMonth() } });
@@ -943,37 +983,25 @@ const addNewMonth = (ym) => {
     }
   };
 
-  // shared screen props
   const sharedProps = { activeMonth, currentMonth, isCurrentMonth, isPastMonth, salaryNum, totalFixed, actualTotal, remainingActual, actualPct, remainingAfterExpenses, remainingAfterGoal, savingGoal, savingGoalPct, savingsPct, categories, variableExpenses, fixedExpenses };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-24" dir="rtl">
-      {/* ── Top bar ── */}
       <header className="bg-white border-b border-slate-100 shadow-sm sticky top-0 z-30">
         <div className="max-w-lg mx-auto px-5 py-3.5 flex items-center justify-between">
           <div>
             <h1 className="text-base font-bold text-slate-900">תזרים מזומנים</h1>
             <p className="text-[11px] text-slate-400">{formatMonthLabel(activeMonth)}{!isCurrentMonth && " · היסטוריה"}</p>
           </div>
-          <div className="flex items-center gap-2">
-            {/* month quick selector */}
-            <div className="relative">
-              <select
-                value={activeMonth}
-                onChange={(e) => setActiveMonth(e.target.value)}
-                className="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-medium rounded-xl pr-2.5 pl-6 py-1.5 focus:outline-none cursor-pointer"
-              >
-                {sortedMonths.map((ym) => (
-                  <option key={ym} value={ym}>{formatMonthLabel(ym)}{ym === currentMonth ? " ●" : ""}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-            </div>
+          <div className="relative">
+            <select value={activeMonth} onChange={(e) => setActiveMonth(e.target.value)} className="appearance-none bg-slate-50 border border-slate-200 text-slate-600 text-xs font-medium rounded-xl pr-2.5 pl-6 py-1.5 focus:outline-none cursor-pointer">
+              {sortedMonths.map((ym) => (<option key={ym} value={ym}>{formatMonthLabel(ym)}{ym === currentMonth ? " ●" : ""}</option>))}
+            </select>
+            <ChevronDown className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
           </div>
         </div>
       </header>
 
-      {/* ── Main content ── */}
       <main className="max-w-lg mx-auto px-4 pt-5">
         {activeTab === "home" && (
           <HomeScreen
@@ -1012,10 +1040,9 @@ const addNewMonth = (ym) => {
         )}
       </main>
 
-      {/* ── Bottom Navigation ── */}
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
 
-      {/* ── Modals ── */}
+      {/* Modals */}
       {addFixedModal && (
         <Modal title="הוספת הוצאה קבועה" onClose={() => setAddFixedModal(false)}>
           <Field label="שם הקטגוריה"><input className={inputCls} value={addFixedForm.category} onChange={(e) => setAddFixedForm({ ...addFixedForm, category: e.target.value })} onKeyDown={(e) => e.key === "Enter" && commitAddFixed()} placeholder="למשל: שכירות" autoFocus /></Field>
@@ -1040,6 +1067,9 @@ const addNewMonth = (ym) => {
               </button>
             ))}
           </div>
+          <Field label="תיאור (אופציונלי)">
+            <input className={inputCls} value={addVarForm.description} onChange={(e) => setAddVarForm({ ...addVarForm, description: e.target.value })} placeholder="למשל: קניות בסופר" />
+          </Field>
           <Field label="צפי חודשי (₪) — ריק = אוטומטי">
             <input className={inputCls} type="number" value={addVarForm.estimated} onChange={(e) => setAddVarForm({ ...addVarForm, estimated: e.target.value })} placeholder="מחושב אוטומטית" />
           </Field>
