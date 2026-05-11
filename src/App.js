@@ -15,6 +15,7 @@ import {
   Calendar,
   History,
   LayoutList,
+  RotateCcw,
   Home,
   Wallet,
   ReceiptText,
@@ -22,9 +23,7 @@ import {
   TrendingDown,
   TrendingUp,
   ChevronLeft,
-  Lightbulb,
-  AlertCircle,
-  Sparkles,
+  Tag,
 } from "lucide-react";
 
 // ─── constants ────────────────────────────────────────────────────────────────
@@ -265,7 +264,7 @@ const VariableExpenseRow = ({ item, onEdit, onDelete, onAddExpense, autoEstimate
                   <button onClick={() => setEditField(null)} className="p-1 text-slate-400"><X className="w-3.5 h-3.5" /></button>
                 </div>
               ) : (
-                <button onClick={() => startEdit("category", item.category)} className="font-semibold text-slate-800 text-sm hover:text-indigo-600 text-right block truncate max-w-[150px]">
+                <button onClick={() => startEdit("category", item.category)} className="font-semibold text-slate-800 text-sm hover:text-indigo-600 text-right block truncate max-w-[120px]">
                   {item.description || item.category}
                 </button>
               )}
@@ -274,6 +273,28 @@ const VariableExpenseRow = ({ item, onEdit, onDelete, onAddExpense, autoEstimate
                 {dateStr && <><span>·</span><span>{dateStr}</span></>}
               </p>
             </div>
+          </div>
+        </td>
+
+        {/* צפי */}
+        <td className="px-3 py-3 text-left">
+          <div className="flex items-center gap-1">
+            <div className="flex-1">
+              {editField === "estimated" ? (
+                <div className="flex items-center gap-1">
+                  <input className={cellInputCls} type="number" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={handleKey} autoFocus />
+                  <button onClick={commit} className="p-1 text-emerald-600"><Check className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => setEditField(null)} className="p-1 text-slate-400"><X className="w-3.5 h-3.5" /></button>
+                </div>
+              ) : (
+                <button onClick={() => startEdit("estimated", item.estimated)} className="text-sm font-medium text-slate-700 hover:text-indigo-600 w-full text-left" title={isManual ? "ידני" : "אוטומטי"}>
+                  ₪{num(item.estimated).toLocaleString()}
+                  {isManual && <span className="mr-1 text-[9px] text-indigo-400">ידני</span>}
+                </button>
+              )}
+              {!isManual && autoEstimate !== null && autoEstimate > 0 && <p className="text-[9px] text-slate-400 mt-0.5">ממוצע ₪{autoEstimate.toLocaleString()}</p>}
+            </div>
+            {isManual && <button onClick={resetToAuto} title="איפוס לצפי אוטומטי" className="flex-shrink-0 p-1 text-slate-300 hover:text-indigo-500 transition-colors"><RotateCcw className="w-3 h-3" /></button>}
           </div>
         </td>
 
@@ -301,6 +322,9 @@ const VariableExpenseRow = ({ item, onEdit, onDelete, onAddExpense, autoEstimate
           </div>
         </td>
 
+        {/* הפרש */}
+        <td className="px-3 py-3 text-left"><span className={`text-xs font-semibold ${diffColor}`}>{diffLabel}</span></td>
+
         {/* מחיקה */}
         <td className="px-3 py-3">
           <div className="flex gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
@@ -309,9 +333,11 @@ const VariableExpenseRow = ({ item, onEdit, onDelete, onAddExpense, autoEstimate
         </td>
       </tr>
 
+      {/* שורת הוספת הוצאה */}
       {addingExpense && (
         <tr className="bg-rose-50/50 border-t border-rose-100">
           <td className="px-4 py-2 text-xs text-slate-500 text-right">הוסף ל<span className="font-semibold text-slate-700">{item.category}</span>:</td>
+          <td className="px-3 py-2 text-xs text-slate-400">סה"כ: ₪{num(item.actual).toLocaleString()}</td>
           <td className="px-3 py-2" colSpan={2}>
             <div className="flex items-center gap-2">
               <input
@@ -325,6 +351,7 @@ const VariableExpenseRow = ({ item, onEdit, onDelete, onAddExpense, autoEstimate
               <button onClick={() => setAddingExpense(false)} className="p-1 text-slate-400"><X className="w-4 h-4" /></button>
             </div>
           </td>
+          <td />
         </tr>
       )}
     </>
@@ -406,208 +433,6 @@ const CategoryCard = ({ cat, onEdit, onDelete }) => {
   );
 };
 
-// ─── insights engine (rule-based) ────────────────────────────────────────────
-
-function generateInsights({ salaryNum, totalFixed, actualTotal, remainingActual, remainingAfterExpenses, savingGoal, variableExpenses, store, activeMonth }) {
-  const insights = [];
-  const totalActual = totalFixed + actualTotal;
-  const savingGoalNum = num(savingGoal);
-
-  // נתוני חודשים קודמים
-  const prevMonths = Object.keys(store.months)
-    .filter((ym) => ym < activeMonth)
-    .sort()
-    .reverse()
-    .slice(0, 3);
-
-  const prevAvgTotal = prevMonths.length > 0
-    ? prevMonths.reduce((s, ym) => {
-        const mv = (store.months[ym].variableExpenses || []).reduce((a, i) => a + num(i.actual), 0);
-        return s + mv;
-      }, 0) / prevMonths.length
-    : null;
-
-  // ─ תחזית לסוף חודש ─
-  if (salaryNum > 0) {
-    const pct = salaryNum > 0 ? (totalActual / salaryNum) * 100 : 0;
-    if (remainingActual > 0) {
-      insights.push({
-        id: "forecast-positive",
-        type: "forecast",
-        priority: pct > 80 ? 1 : 3,
-        icon: "trending-up",
-        color: pct > 80 ? "amber" : "emerald",
-        text: `בקצב הנוכחי תסיים את החודש עם ₪${remainingActual.toLocaleString()} פנויים`,
-      });
-    } else {
-      insights.push({
-        id: "forecast-negative",
-        type: "forecast",
-        priority: 0,
-        icon: "alert",
-        color: "red",
-        text: `ההוצאות עברו את ההכנסה החודש ב-₪${Math.abs(remainingActual).toLocaleString()}`,
-      });
-    }
-  }
-
-  // ─ השוואה לחודשים קודמים ─
-  if (prevAvgTotal !== null && actualTotal > 0) {
-    const diff = actualTotal - prevAvgTotal;
-    const diffPct = Math.abs(Math.round((diff / prevAvgTotal) * 100));
-    if (diff > 0 && diffPct > 10) {
-      insights.push({
-        id: "vs-prev-higher",
-        type: "behavior",
-        priority: 1,
-        icon: "trending-up",
-        color: "red",
-        text: `ההוצאות המשתנות שלך גבוהות ב-${diffPct}% לעומת הממוצע האחרון`,
-      });
-    } else if (diff < 0 && diffPct > 10) {
-      insights.push({
-        id: "vs-prev-lower",
-        type: "behavior",
-        priority: 2,
-        icon: "trending-down",
-        color: "emerald",
-        text: `הצלחת לצמצם הוצאות ב-${diffPct}% לעומת הממוצע — עבודה יפה!`,
-      });
-    }
-  }
-
-  // ─ קטגוריה הכי יקרה ─
-  if (variableExpenses.length > 0) {
-    const sorted = [...variableExpenses].sort((a, b) => num(b.actual) - num(a.actual));
-    const top = sorted[0];
-    if (num(top.actual) > 0) {
-      const topPct = actualTotal > 0 ? Math.round((num(top.actual) / actualTotal) * 100) : 0;
-      insights.push({
-        id: "top-category",
-        type: "behavior",
-        priority: 2,
-        icon: "pie",
-        color: "violet",
-        text: `${top.category} היא ההוצאה הגבוהה ביותר — ₪${num(top.actual).toLocaleString()} (${topPct}% מסך הוצאות)`,
-      });
-    }
-  }
-
-  // ─ יעד חיסכון ─
-  if (savingGoalNum > 0 && salaryNum > 0) {
-    if (remainingActual >= savingGoalNum) {
-      insights.push({
-        id: "goal-ok",
-        type: "saving",
-        priority: 2,
-        icon: "piggy",
-        color: "emerald",
-        text: `נראה שתעמוד ביעד החיסכון החודשי של ₪${savingGoalNum.toLocaleString()} 🎉`,
-      });
-    } else if (remainingActual > 0) {
-      const gap = savingGoalNum - remainingActual;
-      insights.push({
-        id: "goal-gap",
-        type: "saving",
-        priority: 1,
-        icon: "target",
-        color: "amber",
-        text: `חסרים ₪${gap.toLocaleString()} להשגת יעד החיסכון החודשי`,
-      });
-    }
-  }
-
-  // ─ המלצת חיסכון ─
-  if (variableExpenses.length > 0 && actualTotal > 0) {
-    const sorted = [...variableExpenses].sort((a, b) => num(b.actual) - num(a.actual));
-    const top = sorted[0];
-    const saving10 = Math.round(num(top.actual) * 0.1);
-    if (saving10 > 0) {
-      insights.push({
-        id: "save-tip",
-        type: "saving",
-        priority: 3,
-        icon: "lightbulb",
-        color: "indigo",
-        text: `צמצום של 10% בהוצאות ${top.category} יחסוך לך ₪${saving10.toLocaleString()} בחודש`,
-      });
-    }
-  }
-
-  // ─ יתרה פנויה לחיסכון ─
-  if (remainingActual > 500 && savingGoalNum === 0) {
-    insights.push({
-      id: "free-to-save",
-      type: "saving",
-      priority: 3,
-      icon: "piggy",
-      color: "emerald",
-      text: `נשאר לך ₪${remainingActual.toLocaleString()} פנויים — שקול להעביר חלק לחיסכון`,
-    });
-  }
-
-  // מיון לפי priority ובחירת 3 ראשונות
-  return insights
-    .sort((a, b) => a.priority - b.priority)
-    .slice(0, 3);
-}
-
-const INSIGHT_STYLES = {
-  emerald: { bg: "bg-emerald-50", border: "border-emerald-100", icon: "text-emerald-500", text: "text-emerald-800" },
-  amber:   { bg: "bg-amber-50",   border: "border-amber-100",   icon: "text-amber-500",   text: "text-amber-800"   },
-  red:     { bg: "bg-red-50",     border: "border-red-100",     icon: "text-red-500",     text: "text-red-800"     },
-  violet:  { bg: "bg-violet-50",  border: "border-violet-100",  icon: "text-violet-500",  text: "text-violet-800"  },
-  indigo:  { bg: "bg-indigo-50",  border: "border-indigo-100",  icon: "text-indigo-500",  text: "text-indigo-800"  },
-};
-
-const InsightIcon = ({ type, cls }) => {
-  if (type === "trending-up")   return <TrendingUp className={`w-4 h-4 ${cls}`} />;
-  if (type === "trending-down") return <TrendingDown className={`w-4 h-4 ${cls}`} />;
-  if (type === "alert")         return <AlertCircle className={`w-4 h-4 ${cls}`} />;
-  if (type === "pie")           return <PieChartIcon className={`w-4 h-4 ${cls}`} />;
-  if (type === "piggy")         return <PiggyBank className={`w-4 h-4 ${cls}`} />;
-  if (type === "target")        return <Target className={`w-4 h-4 ${cls}`} />;
-  if (type === "lightbulb")     return <Lightbulb className={`w-4 h-4 ${cls}`} />;
-  return <Sparkles className={`w-4 h-4 ${cls}`} />;
-};
-
-const AIInsights = ({ salaryNum, totalFixed, actualTotal, remainingActual, remainingAfterExpenses, savingGoal, variableExpenses, store, activeMonth }) => {
-  const insights = useMemo(() =>
-    generateInsights({ salaryNum, totalFixed, actualTotal, remainingActual, remainingAfterExpenses, savingGoal, variableExpenses, store, activeMonth }),
-    [salaryNum, totalFixed, actualTotal, remainingActual, savingGoal, variableExpenses, activeMonth]
-  );
-
-  if (insights.length === 0) return null;
-
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-      <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-l from-indigo-50/50 to-white">
-        <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
-          <Sparkles className="w-4 h-4 text-indigo-500" />
-          תובנות פיננסיות
-        </h3>
-        <p className="text-[10px] text-slate-400 mt-0.5">מבוסס על הנתונים שלך</p>
-      </div>
-      <div className="p-4 space-y-2.5">
-        {insights.map((insight) => {
-          const style = INSIGHT_STYLES[insight.color] || INSIGHT_STYLES.indigo;
-          return (
-            <div
-              key={insight.id}
-              className={`flex items-start gap-3 p-3.5 rounded-xl border ${style.bg} ${style.border} transition-all hover:shadow-sm`}
-            >
-              <div className={`flex-shrink-0 mt-0.5 ${style.icon}`}>
-                <InsightIcon type={insight.icon} cls={style.icon} />
-              </div>
-              <p className={`text-sm leading-relaxed ${style.text}`}>{insight.text}</p>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
 // ─── screen components ────────────────────────────────────────────────────────
 
 // ── HomeScreen ──
@@ -646,7 +471,7 @@ const HomeScreen = ({ salaryNum, totalFixed, actualTotal, remainingActual, actua
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
           <p className="text-[10px] text-slate-400 uppercase font-medium mb-1">הוצאות קבועות</p>
           <p className="text-lg font-bold text-slate-800">₪{totalFixed.toLocaleString()}</p>
@@ -654,6 +479,10 @@ const HomeScreen = ({ salaryNum, totalFixed, actualTotal, remainingActual, actua
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
           <p className="text-[10px] text-slate-400 uppercase font-medium mb-1">הוצאות בפועל</p>
           <p className="text-lg font-bold text-slate-800">₪{actualTotal.toLocaleString()}</p>
+        </div>
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
+          <p className="text-[10px] text-slate-400 uppercase font-medium mb-1">לפי צפי</p>
+          <p className={`text-lg font-bold ${remainingAfterExpenses < 0 ? "text-red-500" : "text-emerald-600"}`}>₪{remainingAfterExpenses.toLocaleString()}</p>
         </div>
       </div>
 
@@ -718,19 +547,6 @@ const HomeScreen = ({ salaryNum, totalFixed, actualTotal, remainingActual, actua
           <div><p className="text-sm font-semibold text-slate-700">תקציב</p><p className="text-xs text-slate-400">{categories.length} קטגוריות</p></div>
         </button>
       </div>
-
-      {/* AI Insights */}
-      <AIInsights
-        salaryNum={salaryNum}
-        totalFixed={totalFixed}
-        actualTotal={actualTotal}
-        remainingActual={remainingActual}
-        remainingAfterExpenses={remainingAfterExpenses}
-        savingGoal={savingGoal}
-        variableExpenses={variableExpenses}
-        store={store}
-        activeMonth={activeMonth}
-      />
     </div>
   );
 };
@@ -831,14 +647,20 @@ const ExpensesScreen = ({ variableExpenses, editVariable, deleteVariable, addExp
     <div className="space-y-4">
       {/* סטטיסטיקות */}
       {variableExpenses.length > 0 && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
+            <p className="text-[10px] text-slate-400 uppercase font-medium mb-1">צפי כולל</p>
+            <p className="text-lg font-bold text-slate-800">₪{totalEst.toLocaleString()}</p>
+          </div>
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
             <p className="text-[10px] text-slate-400 uppercase font-medium mb-1">בפועל</p>
             <p className="text-lg font-bold text-slate-800">₪{totalAct.toLocaleString()}</p>
           </div>
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 text-center">
-            <p className="text-[10px] text-slate-400 uppercase font-medium mb-1">פריטים</p>
-            <p className="text-lg font-bold text-slate-800">{variableExpenses.length}</p>
+            <p className="text-[10px] text-slate-400 uppercase font-medium mb-1">הפרש</p>
+            <p className={`text-lg font-bold ${diff > 0 ? "text-red-500" : diff < 0 ? "text-emerald-600" : "text-slate-400"}`}>
+              {diff === 0 ? "זהה" : `${diff > 0 ? "+" : ""}₪${Math.abs(diff).toLocaleString()}`}
+            </p>
           </div>
         </div>
       )}
@@ -873,13 +695,12 @@ const ExpensesScreen = ({ variableExpenses, editVariable, deleteVariable, addExp
                 <span className="text-xs font-bold text-slate-800">₪{totalAct.toLocaleString()}</span>
               </div>
             </div>
-            <div className="flex flex-col gap-2 flex-1">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 flex-1">
               {chartData.map((slice, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: slice.color }} />
-                  <span className="text-xs font-medium text-slate-700 whitespace-nowrap">{slice.category}</span>
-                  <span className="text-xs text-slate-400 whitespace-nowrap">({Math.round(slice.percent)}%)</span>
-                  <span className="text-xs text-slate-500 mr-auto whitespace-nowrap">₪{slice.value.toLocaleString()}</span>
+                <div key={i} className="flex items-center gap-2 text-sm">
+                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: slice.color }} />
+                  <span className="text-slate-600 font-medium truncate">{slice.category}</span>
+                  <span className="text-slate-400 text-xs">({Math.round(slice.percent)}%)</span>
                 </div>
               ))}
             </div>
@@ -904,6 +725,7 @@ const ExpensesScreen = ({ variableExpenses, editVariable, deleteVariable, addExp
               <thead>
                 <tr className="bg-slate-50/50 text-xs text-slate-400 font-medium">
                   <th className="px-4 py-2 text-right">קטגוריה / תיאור</th>
+                  <th className="px-3 py-2 text-left">צפי</th>
                   <th className="px-3 py-2 text-left">בפועל</th>
                   <th className="px-3 py-2 text-left">הפרש</th>
                   <th className="px-3 py-2" />
@@ -928,8 +750,11 @@ const ExpensesScreen = ({ variableExpenses, editVariable, deleteVariable, addExp
         </div>
         {variableExpenses.length > 0 && (
           <div className="px-5 py-3 bg-slate-50/60 border-t border-slate-100 flex justify-between text-sm font-bold text-slate-700">
-            <span>סה"כ בפועל:</span>
-            <span className="text-slate-800">₪{totalAct.toLocaleString()}</span>
+            <span>צפי: ₪{totalEst.toLocaleString()}</span>
+            <span className={diff > 0 ? "text-red-500" : diff < 0 ? "text-emerald-600" : "text-slate-400"}>
+              בפועל: ₪{totalAct.toLocaleString()}
+              {diff !== 0 && <span className="mr-1 font-normal text-xs">({diff > 0 ? "+" : ""}₪{diff.toLocaleString()})</span>}
+            </span>
           </div>
         )}
       </div>
@@ -1158,7 +983,7 @@ export default function App() {
     }
   };
 
-  const sharedProps = { activeMonth, currentMonth, isCurrentMonth, isPastMonth, salaryNum, totalFixed, actualTotal, remainingActual, actualPct, remainingAfterExpenses, remainingAfterGoal, savingGoal, savingGoalPct, savingsPct, categories, variableExpenses, fixedExpenses, store };
+  const sharedProps = { activeMonth, currentMonth, isCurrentMonth, isPastMonth, salaryNum, totalFixed, actualTotal, remainingActual, actualPct, remainingAfterExpenses, remainingAfterGoal, savingGoal, savingGoalPct, savingsPct, categories, variableExpenses, fixedExpenses };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-24" dir="rtl">
@@ -1245,8 +1070,11 @@ export default function App() {
           <Field label="תיאור (אופציונלי)">
             <input className={inputCls} value={addVarForm.description} onChange={(e) => setAddVarForm({ ...addVarForm, description: e.target.value })} placeholder="למשל: קניות בסופר" />
           </Field>
-          <Field label="סכום (₪)">
-            <input className={inputCls} type="number" value={addVarForm.actual} onChange={(e) => setAddVarForm({ ...addVarForm, actual: e.target.value })} placeholder="0" autoFocus={false} />
+          <Field label="צפי חודשי (₪) — ריק = אוטומטי">
+            <input className={inputCls} type="number" value={addVarForm.estimated} onChange={(e) => setAddVarForm({ ...addVarForm, estimated: e.target.value })} placeholder="מחושב אוטומטית" />
+          </Field>
+          <Field label="בפועל עד כה (₪)">
+            <input className={inputCls} type="number" value={addVarForm.actual} onChange={(e) => setAddVarForm({ ...addVarForm, actual: e.target.value })} placeholder="0" />
           </Field>
           <div className="flex gap-3 pt-1">
             <button onClick={() => setAddVarModal(false)} className="flex-1 py-2 border border-slate-200 rounded-xl text-sm text-slate-500 hover:bg-slate-50">ביטול</button>
@@ -1269,7 +1097,7 @@ export default function App() {
       {newMonthModal && (
         <Modal title="הוספת חודש" onClose={() => setNewMonthModal(false)}>
           <Field label="בחר חודש"><input className={inputCls} type="month" value={newMonthVal} onChange={(e) => setNewMonthVal(e.target.value)} /></Field>
-          <p className="text-xs text-slate-400">הוצאות קבועות יועתקו אוטומטית לחודש החדש.</p>
+          <p className="text-xs text-slate-400">הוצאות קבועות יועתקו אוטומטית. הצפי המשתנה יחושב לפי ממוצע 3 חודשים.</p>
           <div className="flex gap-3 pt-1">
             <button onClick={() => setNewMonthModal(false)} className="flex-1 py-2 border border-slate-200 rounded-xl text-sm text-slate-500 hover:bg-slate-50">ביטול</button>
             <button onClick={() => { addNewMonth(newMonthVal); setNewMonthModal(false); }} className="flex-1 py-2 bg-indigo-600 rounded-xl text-sm text-white font-medium hover:bg-indigo-700">צור חודש</button>
