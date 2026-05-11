@@ -15,7 +15,6 @@ import {
   Calendar,
   History,
   LayoutList,
-  RotateCcw,
   Home,
   Wallet,
   ReceiptText,
@@ -23,12 +22,9 @@ import {
   TrendingDown,
   TrendingUp,
   ChevronLeft,
-  Tag,
   Lightbulb,
   AlertCircle,
   Sparkles,
-  PiggyBank as PiggyBankIcon,
-  TrendingDown as TrendingDownIcon,
 } from "lucide-react";
 
 // ─── constants ────────────────────────────────────────────────────────────────
